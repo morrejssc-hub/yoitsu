@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
+_PIDS_FILE = ROOT / ".pids.json"
 _PASLOE_LOG = ROOT / "pasloe.log"
 _TRENNI_LOG = ROOT / "trenni.log"
 _PASLOE_DIR = ROOT / "pasloe"
@@ -39,17 +40,15 @@ def is_alive(pid: int) -> bool:
 
 def read_pids() -> dict[str, Any] | None:
     """Return parsed .pids.json or None if it doesn't exist / is corrupt."""
-    pids_file = ROOT / ".pids.json"
     try:
-        return json.loads(pids_file.read_text())
+        return json.loads((ROOT / ".pids.json").read_text())
     except (FileNotFoundError, json.JSONDecodeError):
         return None
 
 
 def write_pids(*, pasloe_pid: int, trenni_pid: int) -> None:
-    pids_file = ROOT / ".pids.json"
     now = datetime.now(timezone.utc).isoformat()
-    pids_file.write_text(json.dumps({
+    (ROOT / ".pids.json").write_text(json.dumps({
         "pasloe": {"pid": pasloe_pid, "started_at": now},
         "trenni": {"pid": trenni_pid, "started_at": now},
     }, indent=2))
@@ -57,9 +56,8 @@ def write_pids(*, pasloe_pid: int, trenni_pid: int) -> None:
 
 def clear_pids() -> None:
     """Remove .pids.json; no-op if already absent."""
-    pids_file = ROOT / ".pids.json"
     try:
-        pids_file.unlink()
+        (ROOT / ".pids.json").unlink()
     except FileNotFoundError:
         pass
 
