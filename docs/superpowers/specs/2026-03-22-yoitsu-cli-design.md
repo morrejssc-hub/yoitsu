@@ -41,10 +41,10 @@
 1. Validate env vars: `PASLOE_API_KEY`, `OPENAI_API_KEY` — fail immediately if missing.
 2. Check `.pids.json`: if both processes are alive (`os.kill(pid, 0)` succeeds), return success without restarting.
 3. If PID file exists but process is dead (crash residue), clean up and proceed.
-4. Start pasloe: `uv run uvicorn src.pasloe.app:app ...` → append stdout+stderr to `pasloe.log`.
-5. Poll `GET /events?limit=1` every 0.5s, up to 10s; fail if not ready.
-6. Start trenni: `uv run trenni start -c <config>` → append to `trenni.log`.
-7. Poll `GET /control/status` every 0.5s, up to 10s; fail if not ready.
+4. Start pasloe: `uv run uvicorn src.pasloe.app:app --host 127.0.0.1 --port 8000` from `<root>/pasloe/` → append stdout+stderr to `pasloe.log`. If the `uv` subprocess itself fails to spawn (non-zero immediately), exit 1 with reason.
+5. Poll `GET /events?limit=1` (with `X-API-Key` header) every 0.5s, up to 10s. **Ready** = HTTP 200 received (body content irrelevant). Timeout = exit 1, kill pasloe.
+6. Start trenni: `uv run trenni start -c <config>` from `<root>/trenni/`, where `<config>` is `--config PATH` if provided (resolved relative to cwd), else `<root>/config/trenni.yaml`. Append stdout+stderr to `trenni.log`. If subprocess fails to spawn immediately, exit 1 with reason.
+7. Poll `GET /control/status` every 0.5s, up to 10s. **Ready** = HTTP 200 received. Timeout = exit 1, kill trenni + pasloe.
 8. Write `.pids.json` with PIDs and start timestamps.
 
 **Output:**
@@ -55,8 +55,8 @@
 ### `yoitsu down`
 
 1. Load `.pids.json`; if missing or both processes dead, return success.
-2. `POST /control/stop` to trenni; wait up to 30s for process exit.
-3. If trenni still alive: `SIGTERM` → wait 5s → `SIGKILL`.
+2. `POST /control/stop` to trenni (best-effort; skip if unreachable); poll `os.kill(pid, 0)` every 0.5s, up to 30s for process exit.
+3. If trenni still alive after 30s: `SIGTERM` → poll every 0.5s up to 5s → `SIGKILL`.
 4. `SIGTERM` pasloe → wait 5s → `SIGKILL`.
 5. Remove `.pids.json`.
 
@@ -68,6 +68,10 @@
 ### `yoitsu status`
 
 Aggregates state from both services into a single JSON blob. Checks PID liveness independently of HTTP reachability (a process can be alive but HTTP not yet ready, or vice versa on partial shutdown).
+
+**Data sources:**
+- `pasloe`: PID liveness check + `GET /events/stats` → `{"total_events": int, "by_source": {...}, "by_type": {...}}`. Extract `total_events` and `by_type`; drop `by_source`.
+- `trenni`: PID liveness check + `GET /control/status` → `{"running": bool, "paused": bool, "running_jobs": int, "max_workers": int, "pending_jobs": int, "ready_queue_size": int}`. Pass through all fields verbatim.
 
 **Output:**
 ```json
@@ -89,11 +93,11 @@ Aggregates state from both services into a single JSON blob. Checks PID liveness
 }
 ```
 
-If a service is unreachable, the corresponding object contains `{"alive": false, "error": "<reason>"}`.
+If a service is unreachable, the corresponding object contains `{"alive": false, "error": "<reason>"}` (no other fields). Exit code is always 0 for `status`.
 
 ### `yoitsu submit <tasks.yaml>`
 
-Reads a YAML file with a top-level `tasks` list. Each item is POSTed to `POST /events` as `type: task.submit`. Continues on individual failures.
+Reads a YAML file with a top-level `tasks` list. If the file is missing or invalid YAML, exit 1 immediately with `{"ok": false, "error": "<reason>"}`. Each item is POSTed to pasloe `POST /events`; continues on individual POST failures.
 
 **Tasks YAML format:**
 ```yaml
@@ -102,6 +106,15 @@ tasks:
     role: default
     repo: "https://github.com/..."
     init_branch: main
+```
+
+**POST body sent to pasloe for each task** (matches pasloe's `AppendEventRequest` schema):
+```json
+{
+  "source_id": "yoitsu-cli",
+  "type": "task.submit",
+  "data": {"task": "...", "role": "default", "repo": "...", "init_branch": "main"}
+}
 ```
 
 **Output:**
@@ -125,6 +138,8 @@ Reads the last N lines from `pasloe.log` and/or `trenni.log`. Output is plain te
 ---
 
 ## Process Management Details
+
+**Repo root discovery:** `process.py` resolves the root as `Path(__file__).resolve().parent.parent` (i.e., two levels up from `yoitsu/process.py`). All paths (`pasloe.log`, `trenni.log`, `.pids.json`, default config) are computed relative to this root.
 
 **`.pids.json` schema:**
 ```json
@@ -151,11 +166,16 @@ Reads the last N lines from `pasloe.log` and/or `trenni.log`. Output is plain te
 | Scenario | Behavior |
 |----------|----------|
 | `up` — env var missing | exit 1, `{"ok": false, "error": "OPENAI_API_KEY not set"}` |
-| `up` — pasloe fails readiness | kill pasloe, exit 1 with reason |
-| `up` — trenni fails readiness | kill trenni + pasloe, exit 1 with reason |
-| `down` — trenni HTTP unreachable | skip POST, proceed to SIGTERM |
-| `status` — service unreachable | include `{"alive": false, "error": "..."}`, exit 0 |
-| `submit` — one task fails | continue remaining, report failures in output |
+| `up` — subprocess fails to spawn (uv not found, port in use, etc.) | exit 1, `{"ok": false, "error": "<stderr excerpt>"}` |
+| `up` — pasloe readiness timeout | kill pasloe, exit 1 with reason |
+| `up` — trenni readiness timeout | kill trenni + pasloe, exit 1 with reason |
+| `down` — trenni HTTP unreachable | skip POST /control/stop, proceed directly to SIGTERM (no HTTP call to pasloe is ever made) |
+| `down` — `.pids.json` missing or both dead | return `{"ok": true, "stopped": []}`, exit 0 |
+| `status` — service HTTP unreachable | `{"alive": false, "error": "..."}` for that service, exit 0 |
+| `submit` — file missing or invalid YAML | exit 1, `{"ok": false, "error": "<reason>"}` |
+| `submit` — one task POST fails | continue remaining, report in `errors` list, exit 0 |
+| `pause`/`resume` — trenni HTTP unreachable | exit 1, `{"ok": false, "error": "trenni unreachable"}` |
+| `logs` — log file does not exist | return empty string for that service, no error |
 
 ---
 
