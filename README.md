@@ -1,61 +1,42 @@
 # Yoitsu
 
-Orchestration workspace for the self-evolving agent system.
+Self-evolving agent system. An autonomous agent completes external tasks while discovering and improving its own capabilities by modifying an evolvable repository.
+
+See [docs/architecture.md](docs/architecture.md) for system design principles and [docs/adr/](docs/adr/) for architecture decision records.
 
 ## Components
 
 | Component | Path | Role |
 |-----------|------|------|
-| [palimpsest](https://github.com/morrejssc-hub/palimpsest) | `palimpsest/` | Agent Runtime — executes tasks via LLM + tools |
-| [trenni](https://github.com/morrejssc-hub/trenni) | `trenni/` | Supervisor — polls Pasloe, schedules jobs, manages concurrency |
-| [pasloe](https://github.com/morrejssc-hub/pasloe) | `pasloe/` | Event Store — append-only event log, webhook delivery |
+| [palimpsest](https://github.com/morrejssc-hub/palimpsest) | `palimpsest/` | Agent Runtime — single-job execution engine |
+| [trenni](https://github.com/morrejssc-hub/trenni) | `trenni/` | Supervisor — event-driven orchestration and job dispatch |
+| [pasloe](https://github.com/morrejssc-hub/pasloe) | `pasloe/` | Event Store — append-only event log with webhook delivery |
 
-Each component is a separate git repository cloned here for local development.
-
-## Directory Structure
-
-```
-yoitsu/
-├── config/
-│   └── trenni.yaml          # Trenni supervisor config
-├── scripts/
-│   ├── start.sh             # Start Pasloe + Trenni
-│   ├── submit-tasks.py      # Submit a batch of tasks
-│   └── monitor.py           # Monitor job progress
-├── docs/
-│   └── superpowers/
-│       ├── specs/           # Design specs
-│       └── plans/           # Implementation plans
-└── README.md
-```
+Each component is a separate git repository. Use `scripts/setup.sh` to clone or update all of them.
 
 ## Quick Start
 
 ```bash
-# 1. Set env vars
-export OPENAI_API_KEY=<dashscope key>
+# 1. Clone components
+./scripts/setup.sh
 
-# 2. Start services
+# 2. Set env vars
+export ANTHROPIC_API_KEY=<key>
+
+# 3. Start services
 ./scripts/start.sh
 
-# 3. Submit tasks
+# 4. Submit tasks
 python3 scripts/submit-tasks.py
 
-# 4. Monitor
+# 5. Monitor
 python3 scripts/monitor.py --hours 5
 ```
 
-## Config
+## Configuration
 
-`config/trenni.yaml` — Trenni supervisor config. Key fields:
+`config/trenni.yaml` configures the Supervisor. Key decisions:
 
-- `pasloe_url` — Pasloe event store endpoint
-- `max_workers` — concurrent job limit
-- `default_llm.model` — LLM model (currently `kimi-k2.5` via dashscope)
-- `evo_repo_path` — path to palimpsest evo directory
-- `work_dir` — job working directory (excluded from git)
-
-## Known Issues
-
-- Trenni HTTP status API (`/status`) not implemented — `submit-tasks.py` and `monitor.py` will warn but continue
-- Old evo files (`evo/tools/file_ops.py`, `evo/contexts/*_provider.py`) use a deprecated API — harmless ERRORs in job logs
+- `max_workers` — concurrency limit; keep low until the evo repo is stable
+- `evo_repo_path` — must point to the palimpsest `evo/` directory
+- `default_llm.model` — shared default; individual jobs can override
