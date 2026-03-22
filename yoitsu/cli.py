@@ -196,3 +196,42 @@ def status() -> None:
     api_key = os.environ.get("PASLOE_API_KEY", "")
     result = asyncio.run(_fetch_status(api_key))
     _out(result)
+
+
+@main.command()
+@click.argument("tasks_file", type=click.Path(exists=False))
+def submit(tasks_file: str) -> None:
+    """Submit tasks from a YAML file to pasloe."""
+    import yaml
+
+    api_key = os.environ.get("PASLOE_API_KEY", "")
+
+    try:
+        raw = Path(tasks_file).read_text()
+    except FileNotFoundError:
+        _fail(f"File not found: {tasks_file}")
+
+    try:
+        doc = yaml.safe_load(raw)
+        tasks = doc["tasks"]
+    except Exception as exc:
+        _fail(f"Invalid YAML: {exc}")
+
+    async def _do_submit() -> dict:
+        client = PasloeClient(url=_PASLOE_URL, api_key=api_key)
+        submitted = 0
+        failed = 0
+        errors: list[str] = []
+        try:
+            for task in tasks:
+                event_id = await client.post_event(type_="task.submit", data=dict(task))
+                if event_id is None:
+                    failed += 1
+                    errors.append(str(task.get("task", "?")))
+                else:
+                    submitted += 1
+        finally:
+            await client.aclose()
+        return {"submitted": submitted, "failed": failed, "errors": errors}
+
+    _out(asyncio.run(_do_submit()))

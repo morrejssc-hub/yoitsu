@@ -141,3 +141,49 @@ class TestStatus:
         out = json.loads(r.output)
         assert out["pasloe"]["alive"] is False
         assert out["trenni"]["alive"] is False
+
+
+class TestSubmit:
+    def test_submit_fails_on_missing_file(self):
+        r = _runner().invoke(main, ["submit", "/nonexistent/tasks.yaml"])
+        assert r.exit_code == 1
+        out = json.loads(r.output)
+        assert out["ok"] is False
+
+    def test_submit_fails_on_invalid_yaml(self, tmp_path):
+        f = tmp_path / "bad.yaml"
+        f.write_text(":::invalid:::")
+        r = _runner().invoke(main, ["submit", str(f)])
+        assert r.exit_code == 1
+        out = json.loads(r.output)
+        assert out["ok"] is False
+
+    def test_submit_posts_all_tasks(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PASLOE_API_KEY", "k")
+        f = tmp_path / "tasks.yaml"
+        f.write_text("tasks:\n  - task: hello\n    role: default\n")
+
+        with patch("yoitsu.client.PasloeClient.post_event",
+                   new=AsyncMock(return_value="event-id-1")), \
+             patch("yoitsu.client.PasloeClient.aclose", new=AsyncMock()):
+            r = _runner().invoke(main, ["submit", str(f)])
+
+        assert r.exit_code == 0
+        out = json.loads(r.output)
+        assert out["submitted"] == 1
+        assert out["failed"] == 0
+
+    def test_submit_counts_failures(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PASLOE_API_KEY", "k")
+        f = tmp_path / "tasks.yaml"
+        f.write_text("tasks:\n  - task: t1\n  - task: t2\n")
+
+        with patch("yoitsu.client.PasloeClient.post_event",
+                   new=AsyncMock(side_effect=[None, "id-2"])), \
+             patch("yoitsu.client.PasloeClient.aclose", new=AsyncMock()):
+            r = _runner().invoke(main, ["submit", str(f)])
+
+        assert r.exit_code == 0
+        out = json.loads(r.output)
+        assert out["submitted"] == 1
+        assert out["failed"] == 1
