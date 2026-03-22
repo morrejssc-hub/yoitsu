@@ -483,20 +483,31 @@ class TestTrenniClient:
         assert status["running"] is True
         assert status["running_jobs"] == 2
 
-    async def test_post_control_stop_returns_true(self):
+    async def test_post_control_stop_returns_none_on_success(self):
         c = self._client()
         mock_resp = MagicMock(status_code=200)
         mock_resp.json.return_value = {"ok": True}
         with patch.object(c._http, "post", new=AsyncMock(return_value=mock_resp)):
-            ok = await c.post_control("stop")
-        assert ok is True
+            err = await c.post_control("stop")
+        assert err is None  # None = success
 
-    async def test_post_control_returns_false_on_error(self):
+    async def test_post_control_returns_error_string_on_connect_error(self):
         c = self._client()
         with patch.object(c._http, "post", new=AsyncMock(
                 side_effect=httpx.ConnectError("refused"))):
-            ok = await c.post_control("pause")
-        assert ok is False
+            err = await c.post_control("pause")
+        assert err is not None
+        assert "unreachable" in err.lower()
+
+    async def test_post_control_surfaces_non_200_status_and_body(self):
+        c = self._client()
+        mock_resp = MagicMock(status_code=409)
+        mock_resp.text = "already paused"
+        with patch.object(c._http, "post", new=AsyncMock(return_value=mock_resp)):
+            err = await c.post_control("pause")
+        assert err is not None
+        assert "409" in err
+        assert "already paused" in err
 ```
 
 - [ ] **Step 2: Run to confirm failure**
@@ -584,13 +595,17 @@ class TrenniClient:
         except Exception:
             return None
 
-    async def post_control(self, endpoint: str) -> bool:
-        """POST to /control/<endpoint>; return True on success."""
+    async def post_control(self, endpoint: str) -> str | None:
+        """POST to /control/<endpoint>. Returns None on success, error string on failure."""
         try:
             r = await self._http.post(f"/control/{endpoint}")
-            return r.status_code == 200
-        except Exception:
-            return False
+            if r.status_code == 200:
+                return None
+            return f"trenni returned {r.status_code}: {r.text}"
+        except httpx.ConnectError:
+            return "trenni unreachable"
+        except Exception as exc:
+            return str(exc)
 
     async def aclose(self) -> None:
         await self._http.aclose()
@@ -739,8 +754,8 @@ def _fail(error: str) -> None:
 async def _wait_ready(check_fn, *, timeout: float = 10.0, interval: float = 0.5) -> bool:
     """Poll check_fn() every interval seconds until True or timeout."""
     import time
-    deadline = asyncio.get_event_loop().time() + timeout
-    while asyncio.get_event_loop().time() < deadline:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
         if await check_fn():
             return True
         await asyncio.sleep(interval)
@@ -899,8 +914,8 @@ async def _trenni_graceful_stop(pid: int) -> bool:
     await client.post_control("stop")
     await client.aclose()
 
-    deadline = asyncio.get_event_loop().time() + 30.0
-    while asyncio.get_event_loop().time() < deadline:
+    deadline = asyncio.get_running_loop().time() + 30.0
+    while asyncio.get_running_loop().time() < deadline:
         if not proc.is_alive(pid):
             return True
         await asyncio.sleep(0.5)
@@ -1213,7 +1228,7 @@ Append to `tests/test_cli.py`:
 class TestPauseResume:
     def test_pause_returns_ok(self):
         with patch("yoitsu.client.TrenniClient.post_control",
-                   new=AsyncMock(return_value=True)), \
+                   new=AsyncMock(return_value=None)), \
              patch("yoitsu.client.TrenniClient.aclose", new=AsyncMock()):
             r = _runner().invoke(main, ["pause"])
         assert r.exit_code == 0
@@ -1221,19 +1236,21 @@ class TestPauseResume:
 
     def test_resume_returns_ok(self):
         with patch("yoitsu.client.TrenniClient.post_control",
-                   new=AsyncMock(return_value=True)), \
+                   new=AsyncMock(return_value=None)), \
              patch("yoitsu.client.TrenniClient.aclose", new=AsyncMock()):
             r = _runner().invoke(main, ["resume"])
         assert r.exit_code == 0
         assert json.loads(r.output)["ok"] is True
 
-    def test_pause_fails_if_trenni_unreachable(self):
+    def test_pause_fails_and_surfaces_error_detail(self):
         with patch("yoitsu.client.TrenniClient.post_control",
-                   new=AsyncMock(return_value=False)), \
+                   new=AsyncMock(return_value="trenni returned 409: already paused")), \
              patch("yoitsu.client.TrenniClient.aclose", new=AsyncMock()):
             r = _runner().invoke(main, ["pause"])
         assert r.exit_code == 1
-        assert json.loads(r.output)["ok"] is False
+        out = json.loads(r.output)
+        assert out["ok"] is False
+        assert "409" in out["error"]
 
 
 class TestLogs:
@@ -1272,29 +1289,32 @@ Expected: FAIL.
 
 Append to `yoitsu/cli.py`:
 ```python
-async def _control(endpoint: str) -> bool:
+async def _control(endpoint: str) -> str | None:
+    """Returns None on success, error string on failure."""
     client = TrenniClient(url=_TRENNI_URL)
-    ok = await client.post_control(endpoint)
+    err = await client.post_control(endpoint)
     await client.aclose()
-    return ok
+    return err
 
 
 @main.command()
 def pause() -> None:
     """Pause job dispatch (running jobs continue)."""
-    if asyncio.run(_control("pause")):
+    err = asyncio.run(_control("pause"))
+    if err is None:
         _out({"ok": True})
     else:
-        _fail("trenni unreachable")
+        _fail(err)
 
 
 @main.command()
 def resume() -> None:
     """Resume job dispatch."""
-    if asyncio.run(_control("resume")):
+    err = asyncio.run(_control("resume"))
+    if err is None:
         _out({"ok": True})
     else:
-        _fail("trenni unreachable")
+        _fail(err)
 
 
 @main.command()
