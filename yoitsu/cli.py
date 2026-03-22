@@ -240,8 +240,10 @@ def submit(tasks_file: str) -> None:
 async def _control(endpoint: str) -> str | None:
     """Returns None on success, error string on failure."""
     client = TrenniClient(url=_TRENNI_URL)
-    err = await client.post_control(endpoint)
-    await client.aclose()
+    try:
+        err = await client.post_control(endpoint)
+    finally:
+        await client.aclose()
     return err
 
 
