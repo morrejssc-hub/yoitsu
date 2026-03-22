@@ -13,6 +13,7 @@ trenni-work/
 *.log
 monitor-state.json
 test-report-*.md
+.pids.json
 
 # Python
 __pycache__/
