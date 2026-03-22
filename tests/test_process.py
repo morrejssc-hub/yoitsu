@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 import os
+import signal
 from pathlib import Path
 from unittest.mock import patch
 
@@ -44,3 +45,47 @@ class TestPidFile:
     def test_clear_pids_is_idempotent(self, tmp_path, monkeypatch):
         monkeypatch.setattr(proc, "ROOT", tmp_path)
         proc.clear_pids()  # file doesn't exist — should not raise
+
+
+class TestStartStop:
+    def test_start_pasloe_launches_subprocess(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(proc, "_PASLOE_DIR", tmp_path)
+        monkeypatch.setattr(proc, "_PASLOE_LOG", tmp_path / "pasloe.log")
+
+        fake_proc = type("P", (), {"pid": 42})()
+        with patch("subprocess.Popen", return_value=fake_proc) as mock_popen:
+            pid = proc.start_pasloe()
+        assert pid == 42
+        mock_popen.assert_called_once()
+        args = mock_popen.call_args
+        cmd = args[0][0]
+        assert cmd[0] == "uv"
+        assert "uvicorn" in cmd
+
+    def test_start_trenni_passes_config(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(proc, "_TRENNI_DIR", tmp_path)
+        monkeypatch.setattr(proc, "_TRENNI_LOG", tmp_path / "trenni.log")
+
+        fake_proc = type("P", (), {"pid": 99})()
+        config = tmp_path / "my.yaml"
+        config.touch()
+        with patch("subprocess.Popen", return_value=fake_proc) as mock_popen:
+            pid = proc.start_trenni(config_path=config)
+        assert pid == 99
+        cmd = mock_popen.call_args[0][0]
+        assert str(config) in cmd
+
+    def test_kill_pid_sends_sigterm_then_sigkill(self):
+        kill_calls: list[tuple] = []
+
+        def fake_kill(pid: int, sig: int) -> None:
+            kill_calls.append((pid, sig))
+            if sig == signal.SIGKILL:
+                raise ProcessLookupError
+
+        with patch("os.kill", side_effect=fake_kill):
+            proc.kill_pid(123, wait_s=0.05)
+
+        sigs = [sig for _, sig in kill_calls]
+        assert signal.SIGTERM in sigs
+        assert signal.SIGKILL in sigs

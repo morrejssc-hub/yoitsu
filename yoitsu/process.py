@@ -62,3 +62,56 @@ def clear_pids() -> None:
         pids_file.unlink()
     except FileNotFoundError:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Process start
+# ---------------------------------------------------------------------------
+
+def start_pasloe() -> int:
+    """Launch pasloe; return its PID. Raises on immediate spawn failure."""
+    log_file = open(_PASLOE_LOG, "a")
+    p = subprocess.Popen(
+        ["uv", "run", "uvicorn", "src.pasloe.app:app",
+         "--host", "127.0.0.1", "--port", "8000"],
+        cwd=_PASLOE_DIR,
+        stdout=log_file,
+        stderr=log_file,
+    )
+    return p.pid
+
+
+def start_trenni(config_path: Path | None = None) -> int:
+    """Launch trenni; return its PID. Raises on immediate spawn failure."""
+    config = str(config_path or _DEFAULT_CONFIG)
+    log_file = open(_TRENNI_LOG, "a")
+    p = subprocess.Popen(
+        ["uv", "run", "trenni", "start", "-c", config],
+        cwd=_TRENNI_DIR,
+        stdout=log_file,
+        stderr=log_file,
+    )
+    return p.pid
+
+
+# ---------------------------------------------------------------------------
+# Process stop
+# ---------------------------------------------------------------------------
+
+def kill_pid(pid: int, wait_s: float = 5.0) -> None:
+    """Send SIGTERM; if process survives wait_s seconds, send SIGKILL."""
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return  # already dead
+
+    deadline = time.monotonic() + wait_s
+    while time.monotonic() < deadline:
+        time.sleep(0.5)
+        if not is_alive(pid):
+            return
+
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass  # died between check and kill
