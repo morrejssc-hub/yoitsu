@@ -82,9 +82,25 @@ uv run yoitsu status
 uv run yoitsu logs --service pasloe --lines 50
 uv run yoitsu logs --service trenni --lines 50
 
+# Long-running report with Pasloe/Trenni + Podman job visibility
+python3 scripts/monitor.py --hours 5
+
 # Pause/resume job dispatch
 uv run yoitsu pause   # Stop dispatching new jobs
 uv run yoitsu resume  # Resume dispatching
+```
+
+### Quadlet Deployment
+
+```bash
+# Build the Palimpsest job image
+./scripts/build-job-image.sh
+
+# Install/update Quadlet units and start the stack
+./scripts/deploy-quadlet.sh
+
+# Inspect user-systemd + Podman state
+./scripts/quadlet-status.sh
 ```
 
 ### Stop
@@ -104,11 +120,19 @@ uv run yoitsu down
 # Event store connection
 pasloe_url: "http://localhost:8000"
 pasloe_api_key_env: "PASLOE_API_KEY"
+source_id: "trenni-supervisor"
 
-# Palimpsest runtime
-palimpsest_command: "/path/to/palimpsest/.venv/bin/palimpsest"
-evo_repo_path: "/path/to/palimpsest/evo"
-work_dir: "/path/to/trenni-work"
+# Podman job runtime
+runtime:
+  kind: "podman"
+  podman:
+    socket_uri: "unix:///run/podman/podman.sock"
+    pod_name: "yoitsu-dev"
+    image: "localhost/yoitsu-palimpsest-job:dev"
+    pull_policy: "never"
+    git_token_env: "GITHUB_TOKEN"
+    env_allowlist:
+      - "OPENAI_API_KEY"
 
 # Concurrency
 max_workers: 4          # Keep low until evo repo is stable
@@ -186,10 +210,13 @@ uv run yoitsu status
 #   },
 #   "trenni": {
 #     "alive": true,
-#     "state": "running",
-#     "queue_size": 2,
-#     "active_jobs": 1,
-#     "completed_jobs": 10
+#     "running": true,
+#     "paused": false,
+#     "running_jobs": 1,
+#     "max_workers": 4,
+#     "pending_jobs": 2,
+#     "ready_queue_size": 0,
+#     "runtime_kind": "podman"
 #   }
 # }
 ```

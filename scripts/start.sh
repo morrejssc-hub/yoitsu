@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# DEPRECATED: Use `uv run yoitsu up` instead.
+# DEPRECATED: Use `uv run yoitsu up` for local service startup or
+# `./scripts/deploy-quadlet.sh` for Quadlet deployment.
 # This script is kept for reference only.
 # start.sh — Start Pasloe + Trenni for a Yoitsu test run
 # Usage: OPENAI_API_KEY=sk-xxx ./start.sh
@@ -49,6 +50,7 @@ echo ""
 echo "Next steps:"
 echo "  Submit tasks:  python3 $SCRIPT_DIR/submit-tasks.py"
 echo "  Monitor:       python3 $SCRIPT_DIR/monitor.py --hours 5"
+echo "  Quadlet:       $SCRIPT_DIR/deploy-quadlet.sh"
 echo "  Pasloe UI:     http://localhost:8000/ui"
 echo "  Trenni status: http://localhost:8100/status"
 echo "  Logs:          tail -f $ROOT/pasloe.log $ROOT/trenni.log"

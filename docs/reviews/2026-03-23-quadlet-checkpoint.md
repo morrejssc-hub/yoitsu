@@ -1,5 +1,8 @@
 # Quadlet Checkpoint
 
+> Historical note: this checkpoint describes the compatibility phase before the
+> Podman-per-job runtime replaced the inner `subprocess` path.
+
 Date: 2026-03-23
 
 ## What Was Verified

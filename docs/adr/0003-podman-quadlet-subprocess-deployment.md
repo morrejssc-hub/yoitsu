@@ -1,5 +1,9 @@
 # ADR 0003: Podman Quadlet Dev Deployment Uses Subprocess, Not Bubblewrap
 
+> Historical note: this ADR captured the temporary compatibility deployment
+> used earlier on 2026-03-23. It has since been superseded by
+> `docs/adr/0004-quadlet-podman-job-runtime.md`.
+
 **Status:** Accepted  
 **Date:** 2026-03-23  
 **Deciders:** holo, Codex

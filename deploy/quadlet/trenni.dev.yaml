@@ -2,9 +2,22 @@ pasloe_url: "http://127.0.0.1:8000"
 pasloe_api_key_env: "PASLOE_API_KEY"
 source_id: "trenni-supervisor"
 
-palimpsest_command: "/var/lib/yoitsu/venvs/palimpsest/bin/palimpsest"
-evo_repo_path: "/workspace/palimpsest/evo"
-work_dir: "/var/lib/yoitsu/trenni-work"
+runtime:
+  kind: "podman"
+  podman:
+    socket_uri: "unix:///run/podman/podman.sock"
+    pod_name: "yoitsu-dev"
+    image: "localhost/yoitsu-palimpsest-job:dev"
+    pull_policy: "never"
+    stop_grace_seconds: 10
+    cleanup_timeout_seconds: 120
+    retain_on_failure: false
+    git_token_env: "GITHUB_TOKEN"
+    env_allowlist:
+      - "OPENAI_API_KEY"
+    labels:
+      io.yoitsu.managed-by: "trenni"
+      io.yoitsu.stack: "yoitsu"
 
 max_workers: 4
 poll_interval: 2.0
@@ -25,18 +38,11 @@ default_llm:
 
 default_workspace:
   depth: 1
-  git_token_env: "GITHUB_TOKEN"
 
 default_publication:
   strategy: "branch"
   branch_prefix: "palimpsest/job"
   max_recovery_attempts: 2
-
-# ADR-0003: the Quadlet dev deployment uses Podman as the outer boundary and
-# disables the inner bubblewrap sandbox until the container-path and policy
-# model are revisited.
-isolation_backend: "subprocess"
-isolation_unshare_net: false
 
 api_host: "0.0.0.0"
 api_port: 8100

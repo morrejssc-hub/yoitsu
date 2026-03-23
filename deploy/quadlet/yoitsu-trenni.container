@@ -1,7 +1,7 @@
 [Unit]
 Description=Yoitsu Trenni
-After=yoitsu-pasloe.service
-Requires=yoitsu-pasloe.service
+After=yoitsu-pasloe.service podman.socket
+Requires=yoitsu-pasloe.service podman.socket
 
 [Container]
 ContainerName=yoitsu-trenni
@@ -10,13 +10,13 @@ Pull=newer
 Pod=yoitsu.pod
 StartWithPod=true
 Environment=TRENNI_SRC_ROOT=/workspace/trenni
-Environment=PALIMPSEST_SRC_ROOT=/workspace/palimpsest
 Environment=YOITSU_STATE_DIR=/var/lib/yoitsu
 Environment=HOME=/var/lib/yoitsu/home
+Environment=PODMAN_HOST=unix:///run/podman/podman.sock
 EnvironmentFile=%h/.config/containers/systemd/yoitsu/trenni.env
 Volume=%h/yoitsu/trenni:/workspace/trenni:ro,Z
-Volume=%h/yoitsu/palimpsest:/workspace/palimpsest:ro,Z
 Volume=%h/yoitsu/pasloe:/workspace/pasloe:ro,Z
+Volume=%t/podman/podman.sock:/run/podman/podman.sock
 Volume=yoitsu-dev-state.volume:/var/lib/yoitsu
 Volume=%h/.config/containers/systemd/yoitsu/bin:/opt/yoitsu/bin:ro,Z
 Volume=%h/.config/containers/systemd/yoitsu/trenni.dev.yaml:/etc/yoitsu/trenni.yaml:ro,Z

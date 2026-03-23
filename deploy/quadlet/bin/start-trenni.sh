@@ -2,32 +2,17 @@
 set -eu
 
 STATE_DIR="${YOITSU_STATE_DIR:-/var/lib/yoitsu}"
-PALIMPSEST_SRC="${PALIMPSEST_SRC_ROOT:-/workspace/palimpsest}"
 TRENNI_SRC="${TRENNI_SRC_ROOT:-/workspace/trenni}"
-PALIMPSEST_BUILD_SRC="${STATE_DIR}/src/palimpsest"
 TRENNI_BUILD_SRC="${STATE_DIR}/src/trenni"
-PALIMPSEST_REV_FILE="${STATE_DIR}/src/palimpsest.rev"
 TRENNI_REV_FILE="${STATE_DIR}/src/trenni.rev"
-PALIMPSEST_VENV="${STATE_DIR}/venvs/palimpsest"
 TRENNI_VENV="${STATE_DIR}/venvs/trenni"
 PIP_CACHE_DIR="${STATE_DIR}/pip-cache"
 
 export HOME="${HOME:-${STATE_DIR}/home}"
 export PIP_DISABLE_PIP_VERSION_CHECK=1
 export PIP_CACHE_DIR
-export DEBIAN_FRONTEND=noninteractive
 
-mkdir -p "${STATE_DIR}/venvs" "${STATE_DIR}/trenni-work" "${STATE_DIR}/src" "${HOME}" "${PIP_CACHE_DIR}"
-
-# ADR-0003: In the rootless Podman/Quadlet dev deployment we validate
-# application behavior first and rely on the outer container boundary.
-# Inner per-job bubblewrap is intentionally disabled here, so only git and
-# basic CA material are bootstrapped in the container.
-if [ ! -x /usr/bin/git ]; then
-  apt-get update
-  apt-get install -y --no-install-recommends ca-certificates git
-  rm -rf /var/lib/apt/lists/*
-fi
+mkdir -p "${STATE_DIR}/venvs" "${STATE_DIR}/src" "${HOME}" "${PIP_CACHE_DIR}"
 
 ensure_venv() {
   venv_path="$1"
@@ -79,7 +64,6 @@ sync_and_install() {
   fi
 }
 
-sync_and_install "${PALIMPSEST_SRC}" "${PALIMPSEST_BUILD_SRC}" "${PALIMPSEST_VENV}" "${PALIMPSEST_REV_FILE}"
 sync_and_install "${TRENNI_SRC}" "${TRENNI_BUILD_SRC}" "${TRENNI_VENV}" "${TRENNI_REV_FILE}"
 
 python - <<'PY'
