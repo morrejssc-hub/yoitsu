@@ -29,6 +29,7 @@ HealthRetries=3
 HealthStartupInterval=10s
 HealthStartupRetries=30
 NoNewPrivileges=true
+SecurityLabelDisable=true
 Notify=healthy
 LogDriver=journald
 

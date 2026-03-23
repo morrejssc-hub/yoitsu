@@ -15,6 +15,7 @@ monitor-state.json
 monitor-*.out
 test-report-*.md
 .pids.json
+.yoitsu.lock
 deploy/quadlet/*.env
 .uv-cache/
 

@@ -85,7 +85,8 @@ systemctl --user daemon-reload
 
 if [[ "$START_SERVICES" -eq 1 ]]; then
     echo "[deploy-quadlet] Starting podman.socket and Yoitsu services"
-    systemctl --user start podman.socket yoitsu-pod.service yoitsu-pasloe.service yoitsu-trenni.service
+    systemctl --user start podman.socket yoitsu-pod.service
+    systemctl --user restart yoitsu-pasloe.service yoitsu-trenni.service
 fi
 
 echo "[deploy-quadlet] Done"
