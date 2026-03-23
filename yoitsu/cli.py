@@ -61,8 +61,11 @@ def main() -> None:
 
 
 async def _do_up(api_key: str, config_path: str | None) -> tuple[int, int]:
-    """Start both services. Returns (pasloe_pid, trenni_pid). Calls _fail on error."""
-    pasloe_pid = proc.start_pasloe()
+    """Start both services and clean up pasloe if trenni startup fails."""
+    try:
+        pasloe_pid = proc.start_pasloe()
+    except Exception as exc:
+        _fail(f"Failed to start pasloe: {exc}")
 
     ready = await _wait_pasloe_ready(api_key)
     if not ready:
@@ -70,7 +73,11 @@ async def _do_up(api_key: str, config_path: str | None) -> tuple[int, int]:
         _fail("pasloe did not become ready within 10s")
 
     cfg = Path(config_path).resolve() if config_path else None
-    trenni_pid = proc.start_trenni(config_path=cfg)
+    try:
+        trenni_pid = proc.start_trenni(config_path=cfg)
+    except Exception as exc:
+        proc.kill_pid(pasloe_pid)
+        _fail(f"Failed to start trenni: {exc}")
 
     ready = await _wait_trenni_ready()
     if not ready:
@@ -119,7 +126,6 @@ def up(config_path: str | None) -> None:
         raise
     except Exception as exc:
         _fail(f"Startup failed: {exc}")
-
     proc.write_pids(pasloe_pid=pasloe_pid, trenni_pid=trenni_pid)
     _out({"ok": True, "pasloe_pid": pasloe_pid, "trenni_pid": trenni_pid})
 

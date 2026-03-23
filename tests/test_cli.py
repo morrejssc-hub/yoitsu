@@ -82,6 +82,26 @@ class TestUp:
         pids = proc.read_pids()
         assert pids["pasloe"]["pid"] == 100
 
+    def test_up_kills_pasloe_if_trenni_start_fails(self, monkeypatch):
+        monkeypatch.setenv("PASLOE_API_KEY", "k")
+        monkeypatch.setenv("OPENAI_API_KEY", "k")
+
+        killed: list[int] = []
+        with (
+            patch("yoitsu.process.read_pids", return_value=None),
+            patch("yoitsu.process.start_pasloe", return_value=100),
+            patch("yoitsu.process.start_trenni", side_effect=RuntimeError("boom")),
+            patch("yoitsu.process.kill_pid", side_effect=lambda pid, **kw: killed.append(pid)),
+            patch("yoitsu.cli._wait_pasloe_ready", new=AsyncMock(return_value=True)),
+        ):
+            r = _runner().invoke(main, ["up"])
+
+        assert r.exit_code == 1
+        out = json.loads(r.output)
+        assert out["ok"] is False
+        assert "Failed to start trenni" in out["error"]
+        assert killed == [100]
+
 
 class TestDown:
     def test_down_succeeds_when_not_running(self, tmp_path, monkeypatch):
