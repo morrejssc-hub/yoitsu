@@ -25,7 +25,8 @@ poll_interval: 2.0
 default_eventstore_source: "palimpsest-agent"
 
 default_llm:
-  model: "gpt-5.2-codex"
+  model: "kimi-k2.5"
+  api_base: "https://coding.dashscope.aliyuncs.com/v1"
   api_key_env: "OPENAI_API_KEY"
   max_iterations: 30
   max_tokens: 4096
