@@ -1,0 +1,41 @@
+[Unit]
+Description=Yoitsu Trenni
+After=yoitsu-pasloe.service
+Requires=yoitsu-pasloe.service
+
+[Container]
+ContainerName=yoitsu-trenni
+Image=docker.io/library/python:3.11-slim
+Pull=newer
+Pod=yoitsu.pod
+StartWithPod=true
+Environment=TRENNI_SRC_ROOT=/workspace/trenni
+Environment=PALIMPSEST_SRC_ROOT=/workspace/palimpsest
+Environment=YOITSU_STATE_DIR=/var/lib/yoitsu
+Environment=HOME=/var/lib/yoitsu/home
+EnvironmentFile=%h/.config/containers/systemd/yoitsu/trenni.env
+Volume=%h/yoitsu/trenni:/workspace/trenni:ro,Z
+Volume=%h/yoitsu/palimpsest:/workspace/palimpsest:ro,Z
+Volume=%h/yoitsu/pasloe:/workspace/pasloe:ro,Z
+Volume=yoitsu-dev-state.volume:/var/lib/yoitsu
+Volume=%h/.config/containers/systemd/yoitsu/bin:/opt/yoitsu/bin:ro,Z
+Volume=%h/.config/containers/systemd/yoitsu/trenni.dev.yaml:/etc/yoitsu/trenni.yaml:ro,Z
+Exec=/bin/sh /opt/yoitsu/bin/start-trenni.sh
+HealthCmd=/bin/sh /opt/yoitsu/bin/health-trenni.sh
+HealthStartupCmd=/bin/sh /opt/yoitsu/bin/health-trenni.sh
+HealthInterval=30s
+HealthTimeout=5s
+HealthRetries=3
+HealthStartupInterval=10s
+HealthStartupRetries=30
+NoNewPrivileges=true
+Notify=healthy
+LogDriver=journald
+
+[Service]
+Restart=always
+RestartSec=10
+TimeoutStartSec=900
+
+[Install]
+WantedBy=default.target

@@ -135,10 +135,14 @@ class Monitor:
 
             # Trenni health
             try:
-                resp = await client.get(f"{TRENNI_URL}/status")
+                resp = await client.get(f"{TRENNI_URL}/control/status")
+                resp.raise_for_status()
                 d = resp.json()
-                print(f"[Monitor] Trenni: jobs={d.get('running_jobs')}/{d.get('max_workers')} "
-                      f"forks={d.get('fork_joins_active')}")
+                print(
+                    f"[Monitor] Trenni: jobs={d.get('running_jobs')}/{d.get('max_workers')} "
+                    f"pending={d.get('pending_jobs')} ready={d.get('ready_queue_size')} "
+                    f"paused={d.get('paused')}"
+                )
             except Exception as e:
                 print(f"[Monitor] WARNING: Trenni unreachable: {e}", file=sys.stderr)
 

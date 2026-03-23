@@ -1,0 +1,33 @@
+[Unit]
+Description=Yoitsu Pasloe
+
+[Container]
+ContainerName=yoitsu-pasloe
+Image=docker.io/library/python:3.11-slim
+Pull=newer
+Pod=yoitsu.pod
+StartWithPod=true
+Environment=PASLOE_SRC_ROOT=/workspace/pasloe
+Environment=PASLOE_STATE_DIR=/var/lib/pasloe
+EnvironmentFile=%h/.config/containers/systemd/yoitsu/pasloe.env
+Volume=%h/yoitsu/pasloe:/workspace/pasloe:ro,Z
+Volume=yoitsu-pasloe-data.volume:/var/lib/pasloe
+Volume=%h/.config/containers/systemd/yoitsu/bin:/opt/yoitsu/bin:ro,Z
+Exec=/bin/sh /opt/yoitsu/bin/start-pasloe.sh
+HealthCmd=/bin/sh /opt/yoitsu/bin/health-pasloe.sh
+HealthStartupCmd=/bin/sh /opt/yoitsu/bin/health-pasloe.sh
+HealthInterval=30s
+HealthTimeout=5s
+HealthRetries=3
+HealthStartupInterval=10s
+HealthStartupRetries=30
+Notify=healthy
+LogDriver=journald
+
+[Service]
+Restart=always
+RestartSec=10
+TimeoutStartSec=900
+
+[Install]
+WantedBy=default.target

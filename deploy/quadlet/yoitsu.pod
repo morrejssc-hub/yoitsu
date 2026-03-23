@@ -1,0 +1,15 @@
+[Unit]
+Description=Yoitsu development pod
+Wants=network-online.target
+After=network-online.target
+
+[Pod]
+PodName=yoitsu-dev
+PublishPort=127.0.0.1:8000:8000
+PublishPort=127.0.0.1:8100:8100
+ExitPolicy=continue
+
+[Service]
+Restart=on-failure
+TimeoutStartSec=900
+

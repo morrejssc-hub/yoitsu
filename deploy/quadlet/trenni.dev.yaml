@@ -1,0 +1,46 @@
+pasloe_url: "http://127.0.0.1:8000"
+pasloe_api_key_env: "PASLOE_API_KEY"
+source_id: "trenni-supervisor"
+
+palimpsest_command: "/var/lib/yoitsu/venvs/palimpsest/bin/palimpsest"
+evo_repo_path: "/workspace/palimpsest/evo"
+work_dir: "/var/lib/yoitsu/trenni-work"
+
+max_workers: 4
+poll_interval: 2.0
+
+default_eventstore_source: "palimpsest-agent"
+
+default_llm:
+  model: "kimi-k2.5"
+  api_base: "https://coding.dashscope.aliyuncs.com/v1"
+  api_key_env: "OPENAI_API_KEY"
+  max_iterations: 30
+  max_tokens: 4096
+  temperature: 0.2
+  max_retries: 3
+  retry_initial_delay: 1.0
+  retry_max_delay: 60.0
+  retry_backoff_factor: 2.0
+
+default_workspace:
+  depth: 1
+  git_token_env: "GITHUB_TOKEN"
+
+default_publication:
+  strategy: "branch"
+  branch_prefix: "palimpsest/job"
+  max_recovery_attempts: 2
+
+# ADR-0003: the Quadlet dev deployment uses Podman as the outer boundary and
+# disables the inner bubblewrap sandbox until the container-path and policy
+# model are revisited.
+isolation_backend: "subprocess"
+isolation_unshare_net: false
+
+api_host: "0.0.0.0"
+api_port: 8100
+
+webhook_secret: ""
+trenni_public_url: "http://127.0.0.1:8100"
+webhook_poll_interval: 30.0

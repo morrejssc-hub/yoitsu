@@ -37,6 +37,24 @@ async def _wait_ready(check_fn, *, timeout: float = 10.0, interval: float = 0.5)
     return False
 
 
+async def _wait_pasloe_ready(api_key: str, *, timeout: float = 10.0) -> bool:
+    """Wait for pasloe readiness and close the client on the same event loop."""
+    client = PasloeClient(url=_PASLOE_URL, api_key=api_key)
+    try:
+        return await _wait_ready(client.check_ready, timeout=timeout)
+    finally:
+        await client.aclose()
+
+
+async def _wait_trenni_ready(*, timeout: float = 10.0) -> bool:
+    """Wait for trenni readiness and close the client on the same event loop."""
+    client = TrenniClient(url=_TRENNI_URL)
+    try:
+        return await _wait_ready(client.check_ready, timeout=timeout)
+    finally:
+        await client.aclose()
+
+
 @click.group()
 def main() -> None:
     """Yoitsu stack management CLI."""
@@ -80,9 +98,7 @@ def up(config_path: str | None) -> None:
         _fail(f"Failed to start pasloe: {exc}")
 
     # 5. Wait for pasloe ready
-    pasloe_client = PasloeClient(url=_PASLOE_URL, api_key=api_key)
-    ready = asyncio.run(_wait_ready(pasloe_client.check_ready))
-    asyncio.run(pasloe_client.aclose())
+    ready = asyncio.run(_wait_pasloe_ready(api_key))
     if not ready:
         proc.kill_pid(pasloe_pid)
         _fail("pasloe did not become ready within 10s")
@@ -96,9 +112,7 @@ def up(config_path: str | None) -> None:
         _fail(f"Failed to start trenni: {exc}")
 
     # 7. Wait for trenni ready
-    trenni_client = TrenniClient(url=_TRENNI_URL)
-    ready = asyncio.run(_wait_ready(trenni_client.check_ready))
-    asyncio.run(trenni_client.aclose())
+    ready = asyncio.run(_wait_trenni_ready())
     if not ready:
         proc.kill_pid(trenni_pid)
         proc.kill_pid(pasloe_pid)
@@ -226,7 +240,13 @@ def submit(tasks_file: str) -> None:
         errors: list[str] = []
         try:
             for task in tasks:
-                event_id = await client.post_event(type_="task.submit", data=dict(task))
+                payload = dict(task)
+                if not payload.get("repo") and payload.get("repo_url"):
+                    payload["repo"] = payload["repo_url"]
+                if not payload.get("init_branch") and payload.get("branch"):
+                    payload["init_branch"] = payload["branch"]
+
+                event_id = await client.post_event(type_="task.submit", data=payload)
                 if event_id is None:
                     failed += 1
                     errors.append(str(task.get("task", "?")))

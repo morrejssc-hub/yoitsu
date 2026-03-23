@@ -55,7 +55,8 @@ class TestUp:
             patch("yoitsu.process.is_alive", return_value=False),
             patch("yoitsu.process.start_pasloe", return_value=100),
             patch("yoitsu.process.start_trenni", return_value=200),
-            patch("yoitsu.cli._wait_ready", new=AsyncMock(return_value=True)),
+            patch("yoitsu.cli._wait_pasloe_ready", new=AsyncMock(return_value=True)),
+            patch("yoitsu.cli._wait_trenni_ready", new=AsyncMock(return_value=True)),
         ):
             r = _runner().invoke(main, ["up"])
 
@@ -181,6 +182,29 @@ class TestSubmit:
         out = json.loads(r.output)
         assert out["submitted"] == 1
         assert out["failed"] == 0
+
+    def test_submit_normalizes_repo_url_aliases(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PASLOE_API_KEY", "k")
+        f = tmp_path / "tasks.yaml"
+        f.write_text(
+            "tasks:\n"
+            "  - task: hello\n"
+            "    role: default\n"
+            "    repo_url: /tmp/repo\n"
+            "    branch: dev\n"
+        )
+
+        with (
+            patch("yoitsu.client.PasloeClient.post_event",
+                  new=AsyncMock(return_value="event-id-1")) as mock_post,
+            patch("yoitsu.client.PasloeClient.aclose", new=AsyncMock()),
+        ):
+            r = _runner().invoke(main, ["submit", str(f)])
+
+        assert r.exit_code == 0
+        payload = mock_post.await_args.kwargs["data"]
+        assert payload["repo"] == "/tmp/repo"
+        assert payload["init_branch"] == "dev"
 
     def test_submit_counts_failures(self, tmp_path, monkeypatch):
         monkeypatch.setenv("PASLOE_API_KEY", "k")

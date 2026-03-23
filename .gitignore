@@ -12,8 +12,11 @@ trenni-work/
 # Logs & runtime state
 *.log
 monitor-state.json
+monitor-*.out
 test-report-*.md
 .pids.json
+deploy/quadlet/*.env
+.uv-cache/
 
 # Python
 __pycache__/
