@@ -6,14 +6,18 @@ PALIMPSEST_SRC="${PALIMPSEST_SRC_ROOT:-/workspace/palimpsest}"
 TRENNI_SRC="${TRENNI_SRC_ROOT:-/workspace/trenni}"
 PALIMPSEST_BUILD_SRC="${STATE_DIR}/src/palimpsest"
 TRENNI_BUILD_SRC="${STATE_DIR}/src/trenni"
+PALIMPSEST_REV_FILE="${STATE_DIR}/src/palimpsest.rev"
+TRENNI_REV_FILE="${STATE_DIR}/src/trenni.rev"
 PALIMPSEST_VENV="${STATE_DIR}/venvs/palimpsest"
 TRENNI_VENV="${STATE_DIR}/venvs/trenni"
+PIP_CACHE_DIR="${STATE_DIR}/pip-cache"
 
 export HOME="${HOME:-${STATE_DIR}/home}"
 export PIP_DISABLE_PIP_VERSION_CHECK=1
+export PIP_CACHE_DIR
 export DEBIAN_FRONTEND=noninteractive
 
-mkdir -p "${STATE_DIR}/venvs" "${STATE_DIR}/trenni-work" "${STATE_DIR}/src" "${HOME}"
+mkdir -p "${STATE_DIR}/venvs" "${STATE_DIR}/trenni-work" "${STATE_DIR}/src" "${HOME}" "${PIP_CACHE_DIR}"
 
 # ADR-0003: In the rootless Podman/Quadlet dev deployment we validate
 # application behavior first and rely on the outer container boundary.
@@ -37,6 +41,10 @@ ensure_venv() {
   "${venv_path}/bin/pip" install --upgrade "${package_path}"
 }
 
+current_src_rev() {
+  git -C "$1" rev-parse HEAD 2>/dev/null || echo "unknown"
+}
+
 sync_src() {
   src_path="$1"
   dest_path="$2"
@@ -46,11 +54,33 @@ sync_src() {
   cp -a "${src_path}"/. "${dest_path}"/
 }
 
-sync_src "${PALIMPSEST_SRC}" "${PALIMPSEST_BUILD_SRC}"
-sync_src "${TRENNI_SRC}" "${TRENNI_BUILD_SRC}"
+sync_and_install() {
+  src_path="$1"
+  build_path="$2"
+  venv_path="$3"
+  rev_file="$4"
 
-ensure_venv "${PALIMPSEST_VENV}" "${PALIMPSEST_BUILD_SRC}"
-ensure_venv "${TRENNI_VENV}" "${TRENNI_BUILD_SRC}"
+  current_rev="$(current_src_rev "${src_path}")"
+  stored_rev="$(cat "${rev_file}" 2>/dev/null || true)"
+  needs_refresh=0
+
+  if [ ! -d "${build_path}" ] || [ ! -x "${venv_path}/bin/python" ]; then
+    needs_refresh=1
+  fi
+
+  if [ "${current_rev}" != "${stored_rev}" ]; then
+    needs_refresh=1
+  fi
+
+  if [ "${needs_refresh}" -eq 1 ]; then
+    sync_src "${src_path}" "${build_path}"
+    ensure_venv "${venv_path}" "${build_path}"
+    printf '%s\n' "${current_rev}" > "${rev_file}"
+  fi
+}
+
+sync_and_install "${PALIMPSEST_SRC}" "${PALIMPSEST_BUILD_SRC}" "${PALIMPSEST_VENV}" "${PALIMPSEST_REV_FILE}"
+sync_and_install "${TRENNI_SRC}" "${TRENNI_BUILD_SRC}" "${TRENNI_VENV}" "${TRENNI_REV_FILE}"
 
 python - <<'PY'
 import sys
