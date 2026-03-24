@@ -146,10 +146,10 @@ class Monitor:
         job_id = data.get("job_id", "")
         timestamp = event.get("ts", "")
 
-        if event_type in ("trigger.external", "task.created"):
+        if event_type == "task.created":
             self.tasks_submitted += 1
             if event_type not in IGNORED_EVENT_TYPES:
-                print(f"  [{event_type}] {data.get('goal', '')[:100]}")
+                print(f"  [task.created] {data.get('goal', '')[:100]}")
             return
 
         if not job_id:

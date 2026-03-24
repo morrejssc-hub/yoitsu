@@ -20,7 +20,7 @@ The current architecture is documented in [docs/architecture.md](docs/architectu
 
 ## Architecture Summary
 
-- `Job` and `Task` are separate. A job only succeeds or fails. A task can be `in_progress`, `blocked`, `needs_review`, `complete`, `failed`, or `cancelled`.
+- `Job` and `Task` are separate. A job only succeeds or fails. A task is implicitly active until Trenni emits a terminal event: `task.completed`, `task.failed`, or `task.cancelled`.
 - `spawn()` is the only orchestration primitive. Trenni expands it into child jobs plus a conditional join job.
 - Trenni is split into `state`, `scheduler`, `spawn_handler`, `replay`, `checkpoint`, and `isolation` modules.
 - Isolation is a protocol. `PodmanBackend` is the current implementation.
