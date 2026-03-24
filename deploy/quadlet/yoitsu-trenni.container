@@ -10,11 +10,13 @@ Pull=newer
 Pod=yoitsu.pod
 StartWithPod=true
 Environment=TRENNI_SRC_ROOT=/workspace/trenni
+Environment=YOITSU_CONTRACTS_SRC_ROOT=/workspace/yoitsu-contracts
 Environment=YOITSU_STATE_DIR=/var/lib/yoitsu
 Environment=HOME=/var/lib/yoitsu/home
 Environment=PODMAN_HOST=unix:///run/podman/podman.sock
 EnvironmentFile=%h/.config/containers/systemd/yoitsu/trenni.env
 Volume=%h/yoitsu/trenni:/workspace/trenni:ro,Z
+Volume=%h/yoitsu/yoitsu-contracts:/workspace/yoitsu-contracts:ro,Z
 Volume=%h/yoitsu/pasloe:/workspace/pasloe:ro,Z
 Volume=%t/podman/podman.sock:/run/podman/podman.sock
 Volume=yoitsu-dev-state.volume:/var/lib/yoitsu

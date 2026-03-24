@@ -3,8 +3,11 @@ set -eu
 
 STATE_DIR="${YOITSU_STATE_DIR:-/var/lib/yoitsu}"
 TRENNI_SRC="${TRENNI_SRC_ROOT:-/workspace/trenni}"
+CONTRACTS_SRC="${YOITSU_CONTRACTS_SRC_ROOT:-/workspace/yoitsu-contracts}"
 TRENNI_BUILD_SRC="${STATE_DIR}/src/trenni"
+CONTRACTS_BUILD_SRC="${STATE_DIR}/src/yoitsu-contracts"
 TRENNI_REV_FILE="${STATE_DIR}/src/trenni.rev"
+CONTRACTS_REV_FILE="${STATE_DIR}/src/yoitsu-contracts.rev"
 TRENNI_VENV="${STATE_DIR}/venvs/trenni"
 PIP_CACHE_DIR="${STATE_DIR}/pip-cache"
 
@@ -64,6 +67,7 @@ sync_and_install() {
   fi
 }
 
+sync_and_install "${CONTRACTS_SRC}" "${CONTRACTS_BUILD_SRC}" "${TRENNI_VENV}" "${CONTRACTS_REV_FILE}"
 sync_and_install "${TRENNI_SRC}" "${TRENNI_BUILD_SRC}" "${TRENNI_VENV}" "${TRENNI_REV_FILE}"
 
 python - <<'PY'
