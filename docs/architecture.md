@@ -25,16 +25,13 @@ The runtime split is:
 - `success`
 - `failure`
 
-`Task` is the logical work unit. It can move through:
+`Task` is the logical work unit representing a goal. Its lifecycle is purely event-driven and strictly managed by Trenni. It has no intermediate explicit states; it is implicitly active until it reaches a terminal event:
 
-- `in_progress`
-- `blocked`
-- `needs_review`
-- `complete`
-- `failed`
-- `cancelled`
+- `task.completed`
+- `task.failed`
+- `task.cancelled`
 
-The runtime emits `task.updated` to reflect the task state, and `job.completed` or `job.failed` to reflect the execution result. A job can succeed while the task remains `in_progress`.
+Trenni manages task lifecycle transitions purely via structral state evaluation. Palimpsest emits `job.completed` or `job.failed` to reflect execution results, while Trenni derives whether the parent task is done.
 
 ## Spawn Is The Only Orchestration Primitive
 

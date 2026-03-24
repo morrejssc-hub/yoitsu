@@ -247,16 +247,27 @@ def submit(tasks_file: str) -> None:
         errors: list[str] = []
         try:
             for task in tasks:
-                payload = dict(task)
-                if not payload.get("repo") and payload.get("repo_url"):
-                    payload["repo"] = payload["repo_url"]
-                if not payload.get("init_branch") and payload.get("branch"):
-                    payload["init_branch"] = payload["branch"]
+                raw = dict(task)
+                goal = raw.pop("goal", raw.pop("task", ""))
+                
+                context = raw.pop("context", raw)
+                if not isinstance(context, dict):
+                    context = {"value": context}
+                
+                if not context.get("repo") and context.get("repo_url"):
+                    context["repo"] = context.pop("repo_url")
+                if not context.get("init_branch") and context.get("branch"):
+                    context["init_branch"] = context.pop("branch")
 
-                event_id = await client.post_event(type_="task.submit", data=payload)
+                payload = {
+                    "goal": goal,
+                    "context": context,
+                }
+
+                event_id = await client.post_event(type_="trigger.external", data=payload)
                 if event_id is None:
                     failed += 1
-                    errors.append(str(task.get("task", "?")))
+                    errors.append(goal)
                 else:
                     submitted += 1
         finally:

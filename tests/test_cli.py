@@ -205,10 +205,10 @@ class TestSubmit:
     def test_submit_posts_all_tasks(self, tmp_path, monkeypatch):
         monkeypatch.setenv("PASLOE_API_KEY", "k")
         f = tmp_path / "tasks.yaml"
-        f.write_text("tasks:\n  - task: hello\n    role: default\n")
+        f.write_text("tasks:\n  - goal: hello\n    context:\n      role: default\n")
 
         with patch("yoitsu.client.PasloeClient.post_event",
-                   new=AsyncMock(return_value="event-id-1")), \
+                   new=AsyncMock(return_value="event-id-1")) as mock_post, \
              patch("yoitsu.client.PasloeClient.aclose", new=AsyncMock()):
             r = _runner().invoke(main, ["submit", str(f)])
 
@@ -216,16 +216,22 @@ class TestSubmit:
         out = json.loads(r.output)
         assert out["submitted"] == 1
         assert out["failed"] == 0
+        
+        args = mock_post.await_args.kwargs
+        assert args["type_"] == "trigger.external"
+        assert args["data"]["goal"] == "hello"
+        assert args["data"]["context"]["role"] == "default"
 
     def test_submit_normalizes_repo_url_aliases(self, tmp_path, monkeypatch):
         monkeypatch.setenv("PASLOE_API_KEY", "k")
         f = tmp_path / "tasks.yaml"
         f.write_text(
             "tasks:\n"
-            "  - task: hello\n"
-            "    role: default\n"
-            "    repo_url: /tmp/repo\n"
-            "    branch: dev\n"
+            "  - goal: hello\n"
+            "    context:\n"
+            "      role: default\n"
+            "      repo_url: /tmp/repo\n"
+            "      branch: dev\n"
         )
 
         with (
@@ -237,8 +243,8 @@ class TestSubmit:
 
         assert r.exit_code == 0
         payload = mock_post.await_args.kwargs["data"]
-        assert payload["repo"] == "/tmp/repo"
-        assert payload["init_branch"] == "dev"
+        assert payload["context"]["repo"] == "/tmp/repo"
+        assert payload["context"]["init_branch"] == "dev"
 
     def test_submit_counts_failures(self, tmp_path, monkeypatch):
         monkeypatch.setenv("PASLOE_API_KEY", "k")

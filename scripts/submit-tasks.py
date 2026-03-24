@@ -122,15 +122,24 @@ async def preflight():
 
 
 async def submit_task(client: httpx.AsyncClient, task_def: dict, index: int) -> None:
+    # Convert legacy dict into TriggerData payload
+    goal = task_def.pop("task", "")
+    context = dict(task_def)
+    
+    payload = {
+        "goal": goal,
+        "context": context,
+    }
+
     resp = await client.post(
         f"{PASLOE_URL}/events",
-        json={"source_id": SOURCE_ID, "type": "task.submit", "data": task_def},
+        json={"source_id": SOURCE_ID, "type": "trigger.external", "data": payload},
         headers={"X-API-Key": API_KEY, "Content-Type": "application/json"},
     )
     resp.raise_for_status()
     event_id = resp.json().get("id", "?")
     print(f"[Submit] {index}/{len(TASKS)} submitted event_id={event_id}: "
-          f"{task_def['task'][:60]}...")
+          f"{goal[:60]}...")
 
 
 async def main():
