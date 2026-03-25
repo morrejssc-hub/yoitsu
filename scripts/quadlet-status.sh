@@ -12,6 +12,7 @@ section "systemd"
 systemctl --user --no-pager --full status \
     podman.socket \
     yoitsu-pod.service \
+    yoitsu-postgres.service \
     yoitsu-pasloe.service \
     yoitsu-trenni.service || true
 

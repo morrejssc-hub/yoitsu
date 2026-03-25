@@ -96,14 +96,17 @@ python - <<'PY'
 import sys
 import time
 import urllib.request
+import json
 
 deadline = time.time() + 60
 url = "http://127.0.0.1:8000/health"
 
 while time.time() < deadline:
     try:
-        with urllib.request.urlopen(url, timeout=5):
-            sys.exit(0)
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+            if payload.get("status") == "ok":
+                sys.exit(0)
     except Exception:
         time.sleep(2)
 

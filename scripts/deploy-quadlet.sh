@@ -59,9 +59,11 @@ copy_exec() {
 }
 
 copy_file "yoitsu.pod"
+copy_file "yoitsu-postgres.container"
 copy_file "yoitsu-pasloe.container"
 copy_file "yoitsu-trenni.container"
 copy_file "yoitsu-submit.container"
+copy_file "yoitsu-postgres-data.volume"
 copy_file "yoitsu-pasloe-data.volume"
 copy_file "yoitsu-dev-state.volume"
 copy_file "trenni.dev.yaml"
@@ -71,7 +73,7 @@ copy_exec "bin/health-pasloe.sh"
 copy_exec "bin/health-trenni.sh"
 copy_exec "bin/submit-tasks-file.py"
 
-for name in pasloe trenni; do
+for name in postgres pasloe trenni; do
     install -m 0644 "$QUADLET_SRC/$name.env.example" "$QUADLET_DEST/$name.env.example"
     if [[ ! -f "$QUADLET_DEST/$name.env" ]]; then
         install -m 0600 "$QUADLET_SRC/$name.env.example" "$QUADLET_DEST/$name.env"
@@ -85,7 +87,7 @@ fi
 
 if [[ "$RESET_RUNTIME" == "1" ]]; then
     echo "[deploy-quadlet] Resetting Yoitsu runtime data"
-    systemctl --user stop yoitsu-submit.service yoitsu-trenni.service yoitsu-pasloe.service yoitsu-pod.service || true
+    systemctl --user stop yoitsu-submit.service yoitsu-trenni.service yoitsu-pasloe.service yoitsu-postgres.service yoitsu-pod.service || true
 
     while IFS= read -r name; do
         if [[ -n "$name" ]]; then
@@ -93,7 +95,7 @@ if [[ "$RESET_RUNTIME" == "1" ]]; then
         fi
     done < <(podman ps -a --format '{{.Names}}' | rg '^yoitsu-job-')
 
-    podman volume rm -f yoitsu-dev-state yoitsu-pasloe-data || true
+    podman volume rm -f yoitsu-dev-state yoitsu-pasloe-data yoitsu-postgres-data || true
 fi
 
 echo "[deploy-quadlet] Reloading user systemd"
@@ -102,12 +104,12 @@ systemctl --user daemon-reload
 if [[ "$START_SERVICES" -eq 1 ]]; then
     echo "[deploy-quadlet] Starting podman.socket and Yoitsu services"
     systemctl --user start podman.socket yoitsu-pod.service
-    systemctl --user restart yoitsu-pasloe.service yoitsu-trenni.service
+    systemctl --user restart yoitsu-postgres.service yoitsu-pasloe.service yoitsu-trenni.service
     echo "[deploy-quadlet] Starting yoitsu-submit.service"
     systemctl --user start yoitsu-submit.service
 fi
 
 echo "[deploy-quadlet] Done"
 echo "[deploy-quadlet] Quadlet dir: $QUADLET_DEST"
-echo "[deploy-quadlet] Next: edit $QUADLET_DEST/pasloe.env and $QUADLET_DEST/trenni.env if needed"
+echo "[deploy-quadlet] Next: edit $QUADLET_DEST/postgres.env, $QUADLET_DEST/pasloe.env and $QUADLET_DEST/trenni.env if needed"
 echo "[deploy-quadlet] Status: $SCRIPT_DIR/quadlet-status.sh"

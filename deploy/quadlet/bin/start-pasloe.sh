@@ -58,5 +58,44 @@ if [ "${needs_install}" -eq 1 ]; then
   printf '%s\n' "${current_rev}" > "${SRC_REV_FILE}"
 fi
 
+if [ "${DB_TYPE:-postgres}" = "postgres" ]; then
+  "${VENV}/bin/python" - <<'PY'
+import asyncio
+import os
+import time
+
+import asyncpg
+
+
+async def wait_for_pg() -> None:
+    host = os.environ.get("PG_HOST", "127.0.0.1")
+    port = int(os.environ.get("PG_PORT", "5432"))
+    user = os.environ.get("PG_USER", "yoitsu")
+    password = os.environ.get("PG_PASSWORD", "yoitsu")
+    database = os.environ.get("PG_DB", "pasloe")
+
+    deadline = time.time() + 90
+    while time.time() < deadline:
+        try:
+            conn = await asyncpg.connect(
+                host=host,
+                port=port,
+                user=user,
+                password=password,
+                database=database,
+                timeout=5,
+            )
+            await conn.execute("SELECT 1")
+            await conn.close()
+            return
+        except Exception:
+            await asyncio.sleep(2)
+    raise SystemExit("postgres did not become ready within 90s")
+
+
+asyncio.run(wait_for_pg())
+PY
+fi
+
 cd "${PASLOE_SRC}"
 exec "${VENV}/bin/uvicorn" src.pasloe.app:app --host 0.0.0.0 --port 8000

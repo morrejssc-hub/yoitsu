@@ -1,5 +1,7 @@
 [Unit]
 Description=Yoitsu Pasloe
+After=yoitsu-postgres.service
+Requires=yoitsu-postgres.service
 
 [Container]
 ContainerName=yoitsu-pasloe

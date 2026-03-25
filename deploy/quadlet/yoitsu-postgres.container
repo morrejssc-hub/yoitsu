@@ -1,0 +1,28 @@
+[Unit]
+Description=Yoitsu PostgreSQL
+
+[Container]
+ContainerName=yoitsu-postgres
+Image=docker.io/library/postgres:16
+Pull=newer
+Pod=yoitsu.pod
+StartWithPod=true
+EnvironmentFile=%h/.config/containers/systemd/yoitsu/postgres.env
+Volume=yoitsu-postgres-data.volume:/var/lib/postgresql/data:Z
+HealthCmd=pg_isready -h 127.0.0.1 -p 5432 -U yoitsu -d postgres
+HealthStartupCmd=pg_isready -h 127.0.0.1 -p 5432 -U yoitsu -d postgres
+HealthInterval=30s
+HealthTimeout=5s
+HealthRetries=5
+HealthStartupInterval=5s
+HealthStartupRetries=40
+Notify=healthy
+LogDriver=journald
+
+[Service]
+Restart=always
+RestartSec=10
+TimeoutStartSec=900
+
+[Install]
+WantedBy=default.target
