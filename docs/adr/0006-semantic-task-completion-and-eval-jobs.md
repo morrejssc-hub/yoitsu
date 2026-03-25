@@ -1,6 +1,6 @@
 # ADR-0006: 2026-03-26 Semantic Task Completion, Eval Jobs, And Task ID Hierarchy
 
-- Status: Accepted, implementation pending
+- Status: Accepted and implemented (phase 1)
 - Date: 2026-03-26
 - Related: ADR-0002, ADR-0005
 
@@ -200,3 +200,22 @@ Changes required across all packages:
 
 **pasloe**
 - No schema changes required; task results are carried in event `data` JSON
+
+## Implementation Status (2026-03-26)
+
+Implemented in this pass:
+
+- contracts: `EvalSpec`, `TaskResult`, `task.evaluating`, `task.eval_failed`,
+  `JobCompletedData.status`, and `SpawnTaskData.eval_spec`
+- trenni: hash-based child task/job IDs, root task ID UUIDv7-prefix scheme,
+  structural verdict + trace, eval job spawn/settlement flow, and replay support
+  for evaluating/eval_failed lifecycle
+- palimpsest: `task_complete.status` propagation to interaction result and
+  `job.completed`, plus eval-spec passthrough in `spawn` tool
+- context rollup: eval context and child terminal task results are injected via
+  context loader at runtime
+
+Still open:
+
+- stronger evaluator-specific default role/prompt tuning (currently defaults to
+  `default` role when `eval_spec.role` is omitted)
