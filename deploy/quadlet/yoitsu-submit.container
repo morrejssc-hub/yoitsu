@@ -1,0 +1,25 @@
+[Unit]
+Description=Yoitsu Task Submitter
+After=yoitsu-pasloe.service
+Requires=yoitsu-pasloe.service
+
+[Container]
+ContainerName=yoitsu-submit
+Image=docker.io/library/python:3.11-slim
+Pull=newer
+Pod=yoitsu.pod
+StartWithPod=false
+Environment=YOITSU_PASLOE_URL=http://127.0.0.1:8000
+Environment=YOITSU_SUBMIT_SOURCE=yoitsu-quadlet-submit
+Environment=YOITSU_SUBMIT_STAMP_DIR=/var/lib/yoitsu/submission-stamps
+EnvironmentFile=%h/.config/containers/systemd/yoitsu/trenni.env
+Volume=%h/yoitsu:/workspace/yoitsu:ro,Z
+Volume=yoitsu-dev-state.volume:/var/lib/yoitsu
+Exec=/var/lib/yoitsu/venvs/trenni/bin/python /workspace/yoitsu/deploy/quadlet/bin/submit-tasks-file.py /workspace/yoitsu/examples/tasks-2026-03-25-quadlet-roadmap.yaml
+LogDriver=journald
+
+[Service]
+TimeoutStartSec=300
+
+[Install]
+WantedBy=default.target

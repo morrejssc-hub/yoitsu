@@ -13,7 +13,27 @@ export PIP_CACHE_DIR
 mkdir -p "${STATE_DIR}" "${PIP_CACHE_DIR}"
 
 current_src_rev() {
-  git -C "$PASLOE_SRC" rev-parse HEAD 2>/dev/null || echo "unknown"
+  if command -v git >/dev/null 2>&1; then
+    rev="$(git -C "$PASLOE_SRC" rev-parse HEAD 2>/dev/null || true)"
+    if [ -n "$rev" ]; then
+      printf '%s\n' "$rev"
+      return 0
+    fi
+  fi
+
+  (
+    cd "$PASLOE_SRC" || exit 1
+    find . \
+      \( -path './.git' -o -path './.venv' -o -path './__pycache__' -o -path './.pytest_cache' \) -prune \
+      -o -type f -print \
+      | LC_ALL=C sort \
+      | while IFS= read -r rel; do
+          sha="$(sha256sum "$rel" | awk '{print $1}')"
+          printf '%s  %s\n' "$sha" "$rel"
+        done \
+      | sha256sum \
+      | awk '{print $1}'
+  )
 }
 
 if [ ! -x "${VENV}/bin/python" ]; then

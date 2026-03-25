@@ -19,7 +19,7 @@ runtime:
       io.yoitsu.managed-by: "trenni"
       io.yoitsu.stack: "yoitsu"
 
-max_workers: 4
+max_workers: 1
 poll_interval: 2.0
 
 default_eventstore_source: "palimpsest-agent"

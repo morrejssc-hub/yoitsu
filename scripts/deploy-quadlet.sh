@@ -8,6 +8,7 @@ QUADLET_DEST="${YOITSU_QUADLET_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/containers
 
 BUILD_IMAGE=1
 START_SERVICES=1
+RESET_RUNTIME="${YOITSU_RESET_RUNTIME:-0}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -60,6 +61,7 @@ copy_exec() {
 copy_file "yoitsu.pod"
 copy_file "yoitsu-pasloe.container"
 copy_file "yoitsu-trenni.container"
+copy_file "yoitsu-submit.container"
 copy_file "yoitsu-pasloe-data.volume"
 copy_file "yoitsu-dev-state.volume"
 copy_file "trenni.dev.yaml"
@@ -67,6 +69,7 @@ copy_exec "bin/start-pasloe.sh"
 copy_exec "bin/start-trenni.sh"
 copy_exec "bin/health-pasloe.sh"
 copy_exec "bin/health-trenni.sh"
+copy_exec "bin/submit-tasks-file.py"
 
 for name in pasloe trenni; do
     install -m 0644 "$QUADLET_SRC/$name.env.example" "$QUADLET_DEST/$name.env.example"
@@ -80,6 +83,19 @@ if [[ "$BUILD_IMAGE" -eq 1 ]]; then
     "$SCRIPT_DIR/build-job-image.sh"
 fi
 
+if [[ "$RESET_RUNTIME" == "1" ]]; then
+    echo "[deploy-quadlet] Resetting Yoitsu runtime data"
+    systemctl --user stop yoitsu-submit.service yoitsu-trenni.service yoitsu-pasloe.service yoitsu-pod.service || true
+
+    while IFS= read -r name; do
+        if [[ -n "$name" ]]; then
+            podman rm -f "$name" || true
+        fi
+    done < <(podman ps -a --format '{{.Names}}' | rg '^yoitsu-job-')
+
+    podman volume rm -f yoitsu-dev-state yoitsu-pasloe-data || true
+fi
+
 echo "[deploy-quadlet] Reloading user systemd"
 systemctl --user daemon-reload
 
@@ -87,6 +103,8 @@ if [[ "$START_SERVICES" -eq 1 ]]; then
     echo "[deploy-quadlet] Starting podman.socket and Yoitsu services"
     systemctl --user start podman.socket yoitsu-pod.service
     systemctl --user restart yoitsu-pasloe.service yoitsu-trenni.service
+    echo "[deploy-quadlet] Starting yoitsu-submit.service"
+    systemctl --user start yoitsu-submit.service
 fi
 
 echo "[deploy-quadlet] Done"
