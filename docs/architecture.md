@@ -1,6 +1,6 @@
 # Yoitsu Architecture
 
-Updated: 2026-03-24
+Updated: 2026-03-26
 
 ## Core Model
 
@@ -20,18 +20,34 @@ The runtime split is:
 
 ## Job And Task Are Different
 
-`Job` is the execution unit. It runs one Palimpsest pipeline. It only ends in:
+`Job` is the execution unit. It runs one Palimpsest pipeline. It terminates via
+job lifecycle events:
 
-- `success`
-- `failure`
+- `job.completed`
+- `job.failed`
+- `job.cancelled`
 
-`Task` is the logical work unit representing a goal. Its lifecycle is purely event-driven and strictly managed by Trenni. It has no intermediate explicit states; it is implicitly active until it reaches a terminal event:
+`Task` is the logical work unit representing a goal. Its lifecycle is event-driven
+and strictly managed by Trenni. Current states are:
 
+- intermediate:
+  - `pending`
+  - `running`
+  - `evaluating`
+- terminal:
 - `task.completed`
 - `task.failed`
+- `task.partial`
 - `task.cancelled`
+- `task.eval_failed`
 
-Trenni manages task lifecycle transitions purely via structral state evaluation. Palimpsest emits `job.completed` or `job.failed` to reflect execution results, while Trenni derives whether the parent task is done.
+Trenni manages task lifecycle transitions through two layers:
+
+- structural verdict derived from job terminal states and trace
+- optional semantic verdict produced by one eval job per task
+
+Palimpsest emits job outcomes. Trenni derives the final task state from those
+job outcomes plus optional eval output.
 
 ## Spawn Is The Only Orchestration Primitive
 
@@ -42,6 +58,11 @@ Trenni expands one spawn request into:
 - child tasks
 - child jobs
 - one join job tied to the parent task
+
+Task IDs are hierarchical and deterministic:
+
+- root task IDs are the first 16 hex chars of the trigger event UUIDv7
+- child task IDs are `{parent_task_id}/{hash}`
 
 Each queued job carries a condition tree. Trenni currently evaluates:
 
@@ -83,7 +104,11 @@ Examples:
 - Pasloe client behavior
 - environment helpers such as Git auth injection
 
-Pasloe stays schema-agnostic. It stores and delivers opaque event payloads.
+Pasloe stays schema-agnostic at the payload level, but now uses a two-stage
+delivery model:
+
+- producers receive `accepted`
+- consumers only read `committed`
 
 ## Runtime Context
 
@@ -101,6 +126,7 @@ The runtime itself is the stable skeleton. It transparently captures events and 
 - Every launched job reaches a terminal result or is reaped into one.
 - The runtime never owns orchestration state for sibling jobs.
 - Spawn expansion is deterministic from the event payload plus parent defaults.
+- Replay queue reconstruction uses `supervisor.job.enqueued` as the intake boundary.
 - Environment injection happens in the isolation layer, not ad hoc in the runtime.
 - Replay must be able to reconstruct pending, ready, and running work from Pasloe events plus container inspection.
 
@@ -108,7 +134,8 @@ The runtime itself is the stable skeleton. It transparently captures events and 
 
 The old document described several future-state features that are still not shipped. Their current status is:
 
-- `Dual Gate Validation`: planned for later self-evolution phases, not implemented now.
+- `Dual Gate Validation`: partially implemented through structural verdicts plus
+  optional eval jobs. Later phases may add stronger automated acceptance policy.
 - `Supervisor detects changed_files violations`: not implemented; boundaries are enforced by convention.
 - metric-based soft gate comparison: not implemented.
 - self-evolution rollback loops: not implemented.
