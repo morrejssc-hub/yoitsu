@@ -48,7 +48,7 @@ reconstructed from two event queries:
 1. `GET /events?source=trenni-supervisor&limit=1000` — fetches all supervisor
    lifecycle events (task created/terminal, job enqueued/launched). Filter
    client-side to the root task_id and its descendants (see §4).
-2. `GET /tasks/<task_id>` from Trenni — provides live state for tasks still
+2. `GET /control/tasks/{task_id}` from Trenni — provides live state for tasks still
    in-memory. Optional; degraded gracefully if Trenni is unreachable.
 
 **Output format** (human-readable text, one line per task, indented by
@@ -174,8 +174,8 @@ log grows. It is explicitly a stopgap. A proper solution requires either:
 - A `/events?task_prefix=<id>` filter added to Pasloe (API change), or
 - A dedicated `/tasks/<id>/subtree` endpoint in Trenni.
 
-That API change is deferred. The stopgap must be replaced before the event
-log exceeds ~10 000 task-creation events.
+That API change is deferred. The stopgap must be replaced before the full
+scan becomes operator-visible in normal use.
 
 ---
 

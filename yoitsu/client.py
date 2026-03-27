@@ -21,7 +21,7 @@ class PasloeClient(AsyncPasloeClient):
     async def check_ready(self) -> bool:
         """Return True if pasloe responds with HTTP 200."""
         try:
-            r = await self._http.get("/events", params={"limit": "1"})
+            r = await self._http.get("/health")
             return r.status_code == 200
         except Exception:
             return False

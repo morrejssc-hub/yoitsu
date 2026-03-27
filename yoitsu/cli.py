@@ -2,20 +2,25 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 import httpx
 import json
 import os
 import subprocess
+import time
 from pathlib import Path
 from typing import NoReturn
 
 import click
+from yoitsu_contracts.client import PasloeEvent
 
 from . import process as proc
 from .client import PasloeClient, TrenniClient
 
 _PASLOE_URL = os.environ.get("YOITSU_PASLOE_URL", "http://localhost:8000")
 _TRENNI_URL = os.environ.get("YOITSU_TRENNI_URL", "http://localhost:8100")
+_TRENNI_SOURCE = "trenni-supervisor"
+_STOPGAP_EVENT_SCAN_LIMIT = 10_000
 
 
 def _out(data: dict) -> None:
@@ -39,6 +44,15 @@ def _error_detail(exc: Exception) -> str:
     return str(exc)
 
 
+@dataclass
+class _TaskChainRow:
+    task_id: str
+    state: str
+    icon: str
+    role: str
+    git_ref: str
+
+
 async def _optional_live_detail(fetch_coro, *, label: str) -> tuple[dict | None, list[str]]:
     try:
         return await fetch_coro, []
@@ -46,6 +60,240 @@ async def _optional_live_detail(fetch_coro, *, label: str) -> tuple[dict | None,
         if exc.response is not None and exc.response.status_code == 404:
             return None, [f"{label} not present in live Trenni state"]
         raise
+
+
+async def _fetch_all_events(
+    client: PasloeClient,
+    *,
+    source: str | None = None,
+    type_: str | None = None,
+    order: str = "asc",
+    limit: int = 1000,
+) -> list[PasloeEvent]:
+    # Stopgap scan strategy from ADR-0005 §4. This should be replaced by a
+    # task-prefix query or dedicated subtree endpoint before operators rely on
+    # scanning arbitrarily large histories.
+    events: list[PasloeEvent] = []
+    cursor: str | None = None
+    while True:
+        page, next_cursor = await client.poll(
+            cursor=cursor,
+            source=source,
+            type_=type_,
+            limit=limit,
+            order=order,
+        )
+        events.extend(page)
+        if len(events) > _STOPGAP_EVENT_SCAN_LIMIT:
+            raise RuntimeError(
+                f"event scan exceeded stopgap limit ({_STOPGAP_EVENT_SCAN_LIMIT}); "
+                "see ADR-0005 §4"
+            )
+        if not next_cursor:
+            return events
+        cursor = next_cursor
+
+
+def _task_in_subtree(candidate: str, root_task_id: str) -> bool:
+    return bool(candidate) and (
+        candidate == root_task_id or candidate.startswith(root_task_id + "/")
+    )
+
+
+def _event_task_id(event: PasloeEvent) -> str:
+    return str(event.data.get("task_id") or "")
+
+
+def _task_icon(state: str, semantic_verdict: str) -> str:
+    if state == "completed":
+        return "✓" if semantic_verdict in {"", "pass"} else "~"
+    if state == "partial":
+        return "~"
+    if state == "failed":
+        return "✗"
+    if state == "cancelled":
+        return "–"
+    return "…"
+
+
+def _task_state_from_event_type(event_type: str) -> str | None:
+    suffix = event_type.rsplit(".", 1)[-1]
+    mapping = {
+        "completed": "completed",
+        "failed": "failed",
+        "partial": "partial",
+        "cancelled": "cancelled",
+        "eval_failed": "eval_failed",
+        "evaluating": "evaluating",
+        "created": "pending",
+    }
+    return mapping.get(suffix)
+
+
+def _git_ref_from_result(result: dict) -> str:
+    trace = result.get("trace", []) or []
+    for entry in reversed(trace):
+        git_ref = str((entry or {}).get("git_ref") or "")
+        if git_ref:
+            return git_ref
+    return ""
+
+
+async def _load_task_chain_rows(
+    task_id: str,
+    pasloe: PasloeClient,
+    trenni: TrenniClient,
+) -> tuple[list[_TaskChainRow], list[str]]:
+    created_events = await _fetch_all_events(
+        pasloe,
+        source=_TRENNI_SOURCE,
+        type_="supervisor.task.created",
+    )
+    subtree = {
+        candidate
+        for candidate in [_event_task_id(event) for event in created_events]
+        if _task_in_subtree(candidate, task_id)
+    }
+    subtree.add(task_id)
+
+    supervisor_events = await _fetch_all_events(
+        pasloe,
+        source=_TRENNI_SOURCE,
+    )
+    subtree_events = [event for event in supervisor_events if _task_in_subtree(_event_task_id(event), task_id)]
+
+    live_tasks, warnings = await _load_live_task_details(sorted(subtree), trenni)
+
+    task_ids = sorted(subtree | set(live_tasks.keys()))
+    rows: list[_TaskChainRow] = []
+    for current_task_id in task_ids:
+        task_events = [event for event in subtree_events if _event_task_id(event) == current_task_id]
+        first_job_event = next(
+            (
+                event for event in task_events
+                if event.type in {"supervisor.job.launched", "supervisor.job.enqueued"}
+            ),
+            None,
+        )
+        role = str(first_job_event.data.get("role") or "-") if first_job_event else "-"
+        terminal_event = next(
+            (
+                event for event in reversed(task_events)
+                if event.type in {
+                    "supervisor.task.completed",
+                    "supervisor.task.failed",
+                    "supervisor.task.partial",
+                    "supervisor.task.cancelled",
+                    "supervisor.task.eval_failed",
+                }
+            ),
+            None,
+        )
+        state = ""
+        semantic_verdict = ""
+        git_ref = ""
+        if terminal_event is not None:
+            state = _task_state_from_event_type(terminal_event.type) or ""
+            result = terminal_event.data.get("result") or {}
+            semantic_verdict = str(((result.get("semantic") or {}).get("verdict") or ""))
+            git_ref = _git_ref_from_result(result)
+        else:
+            live = live_tasks.get(current_task_id, {})
+            state = str(live.get("state") or "pending")
+        rows.append(
+            _TaskChainRow(
+                task_id=current_task_id,
+                state=state,
+                icon=_task_icon(state, semantic_verdict),
+                role=role,
+                git_ref=git_ref or "-",
+            )
+        )
+    return rows, warnings
+
+
+async def _load_live_task_details(
+    task_ids: list[str],
+    trenni: TrenniClient,
+) -> tuple[dict[str, dict], list[str]]:
+    live_tasks: dict[str, dict] = {}
+    warnings: list[str] = []
+    for task_id in task_ids:
+        detail, detail_warnings = await _optional_live_detail(
+            trenni.get_task_strict(task_id),
+            label=f"task {task_id}",
+        )
+        if detail is not None:
+            live_tasks[task_id] = detail
+        warnings.extend(detail_warnings)
+    return live_tasks, warnings
+
+
+async def _fetch_task_history(
+    pasloe: PasloeClient,
+    *,
+    task_id: str,
+    source: str | None = None,
+    type_: str | None = None,
+) -> list[PasloeEvent]:
+    created_events = await _fetch_all_events(
+        pasloe,
+        source=_TRENNI_SOURCE,
+        type_="supervisor.task.created",
+    )
+    subtree = {
+        candidate
+        for candidate in [_event_task_id(event) for event in created_events]
+        if _task_in_subtree(candidate, task_id)
+    }
+    subtree.add(task_id)
+
+    all_events = await _fetch_all_events(
+        pasloe,
+        source=source,
+        type_=type_,
+    )
+    return [event for event in all_events if _event_task_id(event) in subtree]
+
+
+def _render_task_chain(rows: list[_TaskChainRow]) -> str:
+    lines: list[str] = []
+    for row in rows:
+        depth = row.task_id.count("/")
+        indent = "  " * depth
+        short_task_id = row.task_id[:16]
+        state = f"{row.state} {row.icon}".strip()
+        lines.append(
+            f"{indent}{short_task_id:<18} {state:<12} {row.role:<12} {row.git_ref}"
+        )
+    return "\n".join(lines)
+
+
+def _event_matches_task(event: PasloeEvent, task_id: str | None) -> bool:
+    if not task_id:
+        return True
+    return _task_in_subtree(_event_task_id(event), task_id)
+
+
+def _format_event_line(event: PasloeEvent) -> str:
+    ts = event.ts.strftime("%H:%M:%S")
+    data = event.data or {}
+    parts = [f"{ts} [{event.source_id}] {event.type}"]
+    if data.get("job_id"):
+        parts.append(f"job={str(data['job_id'])[:16]}")
+    if data.get("task_id"):
+        parts.append(f"task={str(data['task_id'])[:16]}")
+    if data.get("role"):
+        parts.append(f"role={data['role']}")
+    return "  ".join(parts)
+
+
+async def _current_tail_cursor(client: PasloeClient) -> str | None:
+    page, _ = await client.poll(limit=1, order="desc")
+    if not page:
+        return None
+    event = page[0]
+    return f"{event.ts.isoformat()}|{event.id}"
 
 
 def _podman_summary() -> dict:
@@ -235,6 +483,11 @@ async def _fetch_status(api_key: str) -> dict:
     trenni_client = TrenniClient(url=_TRENNI_URL)
 
     try:
+        if not pasloe_alive:
+            pasloe_alive = await pasloe_client.check_ready()
+        if not trenni_alive:
+            trenni_alive = await trenni_client.check_ready()
+
         if pasloe_alive:
             stats = await pasloe_client.get_stats()
             pasloe_out = {"alive": True, **(stats or {"error": "stats unavailable"})}
@@ -262,14 +515,55 @@ def status() -> None:
 
 
 @main.command()
-@click.argument("task_id", required=False)
-def tasks(task_id: str | None) -> None:
-    """Show live tasks, or one task detail plus historical job events."""
+@click.option("--timeout", default=600.0, show_default=True, type=float)
+@click.option("--interval", default=5.0, show_default=True, type=float)
+@click.option("--quiet", is_flag=True)
+@click.argument("task_args", nargs=-1)
+def tasks(timeout: float, interval: float, quiet: bool, task_args: tuple[str, ...]) -> None:
+    """Show live tasks, one task detail, or chain/wait views."""
     async def _do() -> dict:
         trenni = TrenniClient(url=_TRENNI_URL)
         pasloe = PasloeClient(url=_PASLOE_URL, api_key=os.environ.get("PASLOE_API_KEY", ""))
         try:
-            if task_id:
+            if task_args and task_args[0] == "chain":
+                if len(task_args) != 2:
+                    raise click.ClickException("usage: yoitsu tasks chain <task_id>")
+                rows, warnings = await _load_task_chain_rows(task_args[1], pasloe, trenni)
+                if not rows:
+                    raise click.ClickException(f"task chain not found: {task_args[1]}")
+                text = _render_task_chain(rows)
+                if warnings:
+                    text += "\n\n" + "\n".join(f"[warn] {warning}" for warning in warnings)
+                click.echo(text)
+                return {}
+            if task_args and task_args[0] == "wait":
+                if len(task_args) != 2:
+                    raise click.ClickException("usage: yoitsu tasks wait <task_id>")
+                target_task_id = task_args[1]
+                deadline = time.monotonic() + timeout
+                while True:
+                    rows, warnings = await _load_task_chain_rows(target_task_id, pasloe, trenni)
+                    render = _render_task_chain(rows) if rows else ""
+                    if not quiet and render:
+                        elapsed = max(0.0, timeout - max(0.0, deadline - time.monotonic()))
+                        click.echo(f"[wait {elapsed:.1f}s]")
+                        click.echo(render)
+                        if warnings:
+                            click.echo("\n".join(f"[warn] {warning}" for warning in warnings))
+                        click.echo("")
+                    current = next((row for row in rows if row.task_id == target_task_id), None)
+                    state = current.state if current else ""
+                    if current and state in {"completed", "failed", "partial", "cancelled", "eval_failed"}:
+                        if quiet and render:
+                            click.echo(render)
+                        raise SystemExit(0 if state == "completed" else 1)
+                    if time.monotonic() >= deadline:
+                        if quiet and render:
+                            click.echo(render)
+                        raise SystemExit(2)
+                    await asyncio.sleep(interval)
+            if task_args:
+                task_id = task_args[0]
                 detail, warnings = await _optional_live_detail(
                     trenni.get_task_strict(task_id),
                     label=f"task {task_id}",
@@ -286,7 +580,11 @@ def tasks(task_id: str | None) -> None:
             await pasloe.aclose()
 
     try:
-        _out(asyncio.run(_do()))
+        result = asyncio.run(_do())
+        if result:
+            _out(result)
+        elif not task_args or task_args[0] not in {"chain", "wait"}:
+            _out({})
     except Exception as exc:
         _fail(f"tasks query failed: {_error_detail(exc)}")
 
@@ -325,17 +623,55 @@ def jobs(job_id: str | None) -> None:
 @click.option("--limit", default=20, show_default=True, type=int)
 @click.option("--source", default=None)
 @click.option("--type", "type_", default=None)
-def events(limit: int, source: str | None, type_: str | None) -> None:
-    """Show recent committed Pasloe events."""
+@click.option("--task", "task_id", default=None)
+@click.option("--interval", default=2.0, show_default=True, type=float)
+@click.argument("event_args", nargs=-1)
+def events(limit: int, source: str | None, type_: str | None, task_id: str | None, interval: float, event_args: tuple[str, ...]) -> None:
+    """Show recent committed Pasloe events, or tail them."""
     async def _do() -> dict:
         client = PasloeClient(url=_PASLOE_URL, api_key=os.environ.get("PASLOE_API_KEY", ""))
         try:
+            if event_args and event_args[0] == "tail":
+                if len(event_args) != 1:
+                    raise click.ClickException("usage: yoitsu events tail [--task <task_id>]")
+                if task_id:
+                    historical = await _fetch_task_history(
+                        client,
+                        task_id=task_id,
+                        source=source,
+                        type_=type_,
+                    )
+                    for event in historical:
+                        click.echo(_format_event_line(event))
+                cursor = await _current_tail_cursor(client)
+                try:
+                    while True:
+                        page, next_cursor = await client.poll(
+                            cursor=cursor,
+                            source=source,
+                            type_=type_,
+                            limit=100,
+                            order="asc",
+                        )
+                        for event in page:
+                            if _event_matches_task(event, task_id):
+                                click.echo(_format_event_line(event))
+                        if next_cursor:
+                            cursor = next_cursor
+                        elif page:
+                            last = page[-1]
+                            cursor = f"{last.ts.isoformat()}|{last.id}"
+                        await asyncio.sleep(interval)
+                except KeyboardInterrupt:
+                    return {}
             return {"events": await client.list_events_strict(limit=limit, source=source, type_=type_)}
         finally:
             await client.aclose()
 
     try:
-        _out(asyncio.run(_do()))
+        result = asyncio.run(_do())
+        if result:
+            _out(result)
     except Exception as exc:
         _fail(f"events query failed: {_error_detail(exc)}")
 

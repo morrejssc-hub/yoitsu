@@ -3,18 +3,30 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 from click.testing import CliRunner
+from yoitsu_contracts.client import PasloeEvent
 
-from yoitsu.cli import main
+from yoitsu.cli import _task_icon, main
 
 
 def _runner() -> CliRunner:
     return CliRunner()
+
+
+def _pe(event_id: str, type_: str, data: dict | None = None) -> PasloeEvent:
+    return PasloeEvent(
+        id=event_id,
+        source_id="trenni-supervisor",
+        type=type_,
+        ts=datetime.fromisoformat("2026-03-27T12:00:00"),
+        data=data or {},
+    )
 
 
 class TestUp:
@@ -170,14 +182,41 @@ class TestStatus:
         monkeypatch.setattr(proc, "_PIDS_FILE", tmp_path / ".pids.json")
         # No PID file — both dead
 
-        r = _runner().invoke(main, ["status"])
+        with (
+            patch("yoitsu.client.PasloeClient.check_ready", new=AsyncMock(return_value=False)),
+            patch("yoitsu.client.TrenniClient.check_ready", new=AsyncMock(return_value=False)),
+            patch("yoitsu.client.PasloeClient.aclose", new=AsyncMock()),
+            patch("yoitsu.client.TrenniClient.aclose", new=AsyncMock()),
+        ):
+            r = _runner().invoke(main, ["status"])
         assert r.exit_code == 0
         out = json.loads(r.output)
         assert out["pasloe"]["alive"] is False
         assert out["trenni"]["alive"] is False
 
+    def test_status_uses_http_fallback_when_no_pid_file(self):
+        with (
+            patch("yoitsu.process.read_pids", return_value=None),
+            patch("yoitsu.client.PasloeClient.check_ready", new=AsyncMock(return_value=True)),
+            patch("yoitsu.client.TrenniClient.check_ready", new=AsyncMock(return_value=True)),
+            patch("yoitsu.client.PasloeClient.get_stats", new=AsyncMock(return_value={"total_events": 3, "by_type": {}})),
+            patch("yoitsu.client.TrenniClient.get_status", new=AsyncMock(return_value={"running": True})),
+            patch("yoitsu.cli._podman_summary", return_value={"available": False}),
+            patch("yoitsu.client.PasloeClient.aclose", new=AsyncMock()),
+            patch("yoitsu.client.TrenniClient.aclose", new=AsyncMock()),
+        ):
+            r = _runner().invoke(main, ["status"])
+        assert r.exit_code == 0
+        out = json.loads(r.output)
+        assert out["pasloe"]["alive"] is True
+        assert out["trenni"]["alive"] is True
+
 
 class TestQueryCommands:
+    def test_task_icon_uses_approx_for_unknown_and_en_dash_for_cancelled(self):
+        assert _task_icon("completed", "unknown") == "~"
+        assert _task_icon("cancelled", "") == "–"
+
     def test_tasks_lists_live_tasks(self):
         with (
             patch("yoitsu.client.TrenniClient.get_tasks_strict", new=AsyncMock(return_value=[{"task_id": "t1"}])),
@@ -270,6 +309,109 @@ class TestQueryCommands:
             r = _runner().invoke(main, ["tasks"])
         assert r.exit_code == 1
         assert "tasks query failed" in json.loads(r.output)["error"]
+
+    def test_tasks_chain_renders_human_readable_tree(self):
+        poll_results = [
+            ([
+                _pe("e1", "supervisor.task.created", {"task_id": "root"}),
+                _pe("e2", "supervisor.task.created", {"task_id": "root/ab12"}),
+            ], None),
+            ([
+                _pe("e1", "supervisor.task.created", {"task_id": "root"}),
+                _pe("e2", "supervisor.task.created", {"task_id": "root/ab12"}),
+                _pe("e3", "supervisor.job.launched", {"task_id": "root", "role": "planner"}),
+                _pe("e4", "supervisor.job.launched", {"task_id": "root/ab12", "role": "implementer"}),
+                _pe("e5", "supervisor.task.completed", {
+                    "task_id": "root/ab12",
+                    "result": {
+                        "semantic": {"verdict": "pass"},
+                        "trace": [{"git_ref": "palimpsest/job/demo:deadbeef"}],
+                    },
+                }),
+            ], None),
+        ]
+        with (
+            patch("yoitsu.client.PasloeClient.poll", new=AsyncMock(side_effect=poll_results)),
+            patch("yoitsu.client.TrenniClient.get_task_strict", new=AsyncMock(side_effect=httpx.HTTPStatusError("not found", request=MagicMock(), response=MagicMock(status_code=404, text="not found", reason_phrase="Not Found")))),
+            patch("yoitsu.client.PasloeClient.aclose", new=AsyncMock()),
+            patch("yoitsu.client.TrenniClient.aclose", new=AsyncMock()),
+        ):
+            r = _runner().invoke(main, ["tasks", "chain", "root"])
+        assert r.exit_code == 0
+        assert "root" in r.output
+        assert "implementer" in r.output
+        assert "palimpsest/job/demo:deadbeef" in r.output
+
+    def test_tasks_wait_exits_zero_on_completed(self):
+        poll_results = [
+            ([_pe("e1", "supervisor.task.created", {"task_id": "root"})], None),
+            ([
+                _pe("e1", "supervisor.task.created", {"task_id": "root"}),
+                _pe("e2", "supervisor.task.completed", {
+                    "task_id": "root",
+                    "result": {"semantic": {"verdict": "pass"}, "trace": []},
+                }),
+            ], None),
+        ]
+        with (
+            patch("yoitsu.client.PasloeClient.poll", new=AsyncMock(side_effect=poll_results)),
+            patch("yoitsu.client.TrenniClient.get_task_strict", new=AsyncMock(side_effect=httpx.HTTPStatusError("not found", request=MagicMock(), response=MagicMock(status_code=404, text="not found", reason_phrase="Not Found")))),
+            patch("yoitsu.client.PasloeClient.aclose", new=AsyncMock()),
+            patch("yoitsu.client.TrenniClient.aclose", new=AsyncMock()),
+            patch("yoitsu.cli.asyncio.sleep", new=AsyncMock(return_value=None)),
+        ):
+            r = _runner().invoke(main, ["tasks", "--timeout", "60", "--interval", "0", "wait", "root"])
+        assert r.exit_code == 0
+        assert "[wait " in r.output
+        assert "root" in r.output
+
+    def test_events_tail_formats_stream_lines(self):
+        poll_results = [
+            ([_pe("seed", "agent.job.started", {"job_id": "j0", "task_id": "t0"})], None),
+            ([_pe("e1", "agent.job.started", {"job_id": "j1", "task_id": "t1", "role": "planner"})], None),
+        ]
+        with (
+            patch("yoitsu.client.PasloeClient.poll", new=AsyncMock(side_effect=poll_results)),
+            patch("yoitsu.client.PasloeClient.aclose", new=AsyncMock()),
+            patch("yoitsu.cli.asyncio.sleep", new=AsyncMock(side_effect=KeyboardInterrupt())),
+        ):
+            r = _runner().invoke(main, ["events", "tail"])
+        assert r.exit_code == 0
+        assert "agent.job.started" in r.output
+        assert "job=j1" in r.output
+
+    def test_events_tail_task_history_respects_source_filter(self):
+        poll_results = [
+            ([_pe("created", "supervisor.task.created", {"task_id": "root"})], None),
+            ([
+                PasloeEvent(
+                    id="hist",
+                    source_id="palimpsest-agent",
+                    type="agent.job.started",
+                    ts=datetime.fromisoformat("2026-03-27T12:00:01"),
+                    data={"task_id": "root", "job_id": "j1"},
+                )
+            ], None),
+            ([
+                PasloeEvent(
+                    id="tail",
+                    source_id="palimpsest-agent",
+                    type="agent.job.started",
+                    ts=datetime.fromisoformat("2026-03-27T12:00:02"),
+                    data={"task_id": "root", "job_id": "j2"},
+                )
+            ], None),
+            ([], None),
+        ]
+        with (
+            patch("yoitsu.client.PasloeClient.poll", new=AsyncMock(side_effect=poll_results)),
+            patch("yoitsu.client.PasloeClient.aclose", new=AsyncMock()),
+            patch("yoitsu.cli.asyncio.sleep", new=AsyncMock(side_effect=KeyboardInterrupt())),
+        ):
+            r = _runner().invoke(main, ["events", "--task", "root", "--source", "palimpsest-agent", "tail"])
+        assert r.exit_code == 0
+        assert "palimpsest-agent" in r.output
+        assert "agent.job.started" in r.output
 
 
 class TestSubmit:
