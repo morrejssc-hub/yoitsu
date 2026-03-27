@@ -82,6 +82,7 @@ for name in postgres pasloe trenni; do
 done
 
 if [[ "$BUILD_IMAGE" -eq 1 ]]; then
+    "$SCRIPT_DIR/build-python-base.sh"
     "$SCRIPT_DIR/build-job-image.sh"
 fi
 

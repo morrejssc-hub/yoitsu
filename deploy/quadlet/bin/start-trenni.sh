@@ -9,6 +9,8 @@ CONTRACTS_BUILD_SRC="${STATE_DIR}/src/yoitsu-contracts"
 TRENNI_REV_FILE="${STATE_DIR}/src/trenni.rev"
 CONTRACTS_REV_FILE="${STATE_DIR}/src/yoitsu-contracts.rev"
 TRENNI_VENV="${STATE_DIR}/venvs/trenni"
+BASE_VENV="${YOITSU_BASE_VENV:-/opt/yoitsu-base/venv}"
+BASE_REV_DIR="${YOITSU_BASE_REV_DIR:-/opt/yoitsu-base/revs}"
 PIP_CACHE_DIR="${STATE_DIR}/pip-cache"
 
 export HOME="${HOME:-${STATE_DIR}/home}"
@@ -20,10 +22,19 @@ mkdir -p "${STATE_DIR}/venvs" "${STATE_DIR}/src" "${HOME}" "${PIP_CACHE_DIR}"
 ensure_venv() {
   venv_path="$1"
   package_path="$2"
+  rev_file="$3"
+  base_rev_file="$4"
 
   if [ ! -x "${venv_path}/bin/python" ]; then
-    python -m venv "${venv_path}"
-    "${venv_path}/bin/pip" install --upgrade pip setuptools wheel
+    if [ -x "${BASE_VENV}/bin/python" ]; then
+      cp -a "${BASE_VENV}" "${venv_path}"
+      if [ -f "${base_rev_file}" ]; then
+        cp "${base_rev_file}" "${rev_file}"
+      fi
+    else
+      python -m venv "${venv_path}"
+      "${venv_path}/bin/pip" install --upgrade pip setuptools wheel
+    fi
   fi
 
   "${venv_path}/bin/pip" install --upgrade "${package_path}"
@@ -84,7 +95,8 @@ sync_and_install() {
 
   if [ "${needs_refresh}" -eq 1 ]; then
     sync_src "${src_path}" "${build_path}"
-    ensure_venv "${venv_path}" "${build_path}"
+    base_rev_file="${BASE_REV_DIR}/$(basename "${rev_file}")"
+    ensure_venv "${venv_path}" "${build_path}" "${rev_file}" "${base_rev_file}"
     printf '%s\n' "${current_rev}" > "${rev_file}"
   fi
 }

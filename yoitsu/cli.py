@@ -21,6 +21,7 @@ _PASLOE_URL = os.environ.get("YOITSU_PASLOE_URL", "http://localhost:8000")
 _TRENNI_URL = os.environ.get("YOITSU_TRENNI_URL", "http://localhost:8100")
 _TRENNI_SOURCE = "trenni-supervisor"
 _STOPGAP_EVENT_SCAN_LIMIT = 10_000
+_TAIL_HISTORY_LIMIT = 200
 
 
 def _out(data: dict) -> None:
@@ -161,8 +162,24 @@ async def _load_task_chain_rows(
         source=_TRENNI_SOURCE,
     )
     subtree_events = [event for event in supervisor_events if _task_in_subtree(_event_task_id(event), task_id)]
+    terminal_events_by_task: dict[str, PasloeEvent] = {}
+    for event in subtree_events:
+        current_task_id = _event_task_id(event)
+        if event.type in {
+            "supervisor.task.completed",
+            "supervisor.task.failed",
+            "supervisor.task.partial",
+            "supervisor.task.cancelled",
+            "supervisor.task.eval_failed",
+        }:
+            terminal_events_by_task[current_task_id] = event
 
-    live_tasks, warnings = await _load_live_task_details(sorted(subtree), trenni)
+    live_tasks, warnings = await _load_live_task_details(
+        root_task_id=task_id,
+        task_ids=sorted(subtree),
+        terminal_events_by_task=terminal_events_by_task,
+        trenni=trenni,
+    )
 
     task_ids = sorted(subtree | set(live_tasks.keys()))
     rows: list[_TaskChainRow] = []
@@ -176,19 +193,7 @@ async def _load_task_chain_rows(
             None,
         )
         role = str(first_job_event.data.get("role") or "-") if first_job_event else "-"
-        terminal_event = next(
-            (
-                event for event in reversed(task_events)
-                if event.type in {
-                    "supervisor.task.completed",
-                    "supervisor.task.failed",
-                    "supervisor.task.partial",
-                    "supervisor.task.cancelled",
-                    "supervisor.task.eval_failed",
-                }
-            ),
-            None,
-        )
+        terminal_event = terminal_events_by_task.get(current_task_id)
         state = ""
         semantic_verdict = ""
         git_ref = ""
@@ -213,12 +218,20 @@ async def _load_task_chain_rows(
 
 
 async def _load_live_task_details(
+    *,
+    root_task_id: str,
     task_ids: list[str],
+    terminal_events_by_task: dict[str, PasloeEvent],
     trenni: TrenniClient,
 ) -> tuple[dict[str, dict], list[str]]:
     live_tasks: dict[str, dict] = {}
     warnings: list[str] = []
     for task_id in task_ids:
+        # Only ask Trenni for tasks that are still live candidates. Historical
+        # terminal tasks naturally age out of Trenni's in-memory state and
+        # should not produce warning noise during chain/wait views.
+        if task_id != root_task_id and task_id in terminal_events_by_task:
+            continue
         detail, detail_warnings = await _optional_live_detail(
             trenni.get_task_strict(task_id),
             label=f"task {task_id}",
@@ -256,17 +269,41 @@ async def _fetch_task_history(
     return [event for event in all_events if _event_task_id(event) in subtree]
 
 
+async def _fetch_job_history(
+    pasloe: PasloeClient,
+    *,
+    job_id: str,
+    source: str | None = None,
+    type_: str | None = None,
+) -> list[PasloeEvent]:
+    all_events = await _fetch_all_events(
+        pasloe,
+        source=source,
+        type_=type_,
+    )
+    return [event for event in all_events if _event_matches_job(event, job_id)]
+
+
 def _render_task_chain(rows: list[_TaskChainRow]) -> str:
     lines: list[str] = []
     for row in rows:
         depth = row.task_id.count("/")
         indent = "  " * depth
-        short_task_id = row.task_id[:16]
+        short_task_id = _display_task_id(row.task_id)
         state = f"{row.state} {row.icon}".strip()
         lines.append(
             f"{indent}{short_task_id:<18} {state:<12} {row.role:<12} {row.git_ref}"
         )
     return "\n".join(lines)
+
+
+def _display_task_id(task_id: str) -> str:
+    parts = task_id.split("/")
+    if len(parts) == 1:
+        return task_id[:16]
+    if len(parts) == 2:
+        return parts[-1]
+    return "/".join(parts[-2:])
 
 
 def _event_matches_task(event: PasloeEvent, task_id: str | None) -> bool:
@@ -275,7 +312,62 @@ def _event_matches_task(event: PasloeEvent, task_id: str | None) -> bool:
     return _task_in_subtree(_event_task_id(event), task_id)
 
 
-def _format_event_line(event: PasloeEvent) -> str:
+def _event_matches_job(event: PasloeEvent, job_id: str | None) -> bool:
+    if not job_id:
+        return True
+    return str((event.data or {}).get("job_id") or "") == job_id
+
+
+def _event_detail_lines(event: PasloeEvent) -> list[str]:
+    data = event.data or {}
+    event_type = event.type
+    lines: list[str] = []
+    if event_type == "agent.job.completed":
+        summary = str(data.get("summary") or "").strip()
+        if summary:
+            lines.append(f"    summary: {summary}")
+        if data.get("code"):
+            lines.append(f"    code: {data['code']}")
+    elif event_type == "agent.job.failed":
+        error = str(data.get("error") or "").strip()
+        if error:
+            lines.append(f"    error: {error}")
+    elif event_type == "agent.job.spawn_request":
+        tasks = data.get("tasks") or []
+        lines.append(f"    spawned_tasks: {len(tasks)}")
+        for task in tasks[:5]:
+            if not isinstance(task, dict):
+                continue
+            role = str(task.get("role") or "")
+            goal = str(task.get("goal") or task.get("prompt") or "").strip()
+            lines.append(f"    - role={role or '(none)'} goal={goal[:120]}")
+        if len(tasks) > 5:
+            lines.append(f"    ... truncated {len(tasks) - 5} more")
+    elif event_type == "agent.tool.exec":
+        if data.get("tool_name"):
+            lines.append(f"    tool: {data['tool_name']}")
+        if data.get("arguments_preview"):
+            lines.append(f"    args: {str(data['arguments_preview'])[:160]}")
+    elif event_type == "agent.tool.result":
+        if data.get("tool_name"):
+            lines.append(f"    tool: {data['tool_name']} success={data.get('success')}")
+        if data.get("output_preview"):
+            lines.append(f"    output: {str(data['output_preview'])[:160]}")
+    elif event_type == "agent.llm.response":
+        lines.append(
+            "    "
+            f"finish={data.get('finish_reason', '')} "
+            f"in={data.get('input_tokens', 0)} "
+            f"out={data.get('output_tokens', 0)} "
+            f"dur_ms={data.get('duration_ms', 0)}"
+        )
+    elif event_type == "supervisor.job.launched":
+        if data.get("runtime_kind"):
+            lines.append(f"    runtime={data['runtime_kind']} container={data.get('container_name', '')}")
+    return lines
+
+
+def _format_event_line(event: PasloeEvent, *, verbose: bool = False) -> str:
     ts = event.ts.strftime("%H:%M:%S")
     data = event.data or {}
     parts = [f"{ts} [{event.source_id}] {event.type}"]
@@ -285,7 +377,13 @@ def _format_event_line(event: PasloeEvent) -> str:
         parts.append(f"task={str(data['task_id'])[:16]}")
     if data.get("role"):
         parts.append(f"role={data['role']}")
-    return "  ".join(parts)
+    line = "  ".join(parts)
+    if not verbose:
+        return line
+    detail_lines = _event_detail_lines(event)
+    if not detail_lines:
+        return line
+    return line + "\n" + "\n".join(detail_lines)
 
 
 async def _current_tail_cursor(client: PasloeClient) -> str | None:
@@ -590,14 +688,54 @@ def tasks(timeout: float, interval: float, quiet: bool, task_args: tuple[str, ..
 
 
 @main.command()
-@click.argument("job_id", required=False)
-def jobs(job_id: str | None) -> None:
-    """Show historical Pasloe job events, plus live Trenni detail for one job."""
+@click.option("--source", default=None)
+@click.option("--type", "type_", default=None)
+@click.option("--interval", default=2.0, show_default=True, type=float)
+@click.argument("job_args", nargs=-1)
+def jobs(source: str | None, type_: str | None, interval: float, job_args: tuple[str, ...]) -> None:
+    """Show historical job events, one job detail, or tail one job's event stream."""
     async def _do() -> dict:
         trenni = TrenniClient(url=_TRENNI_URL)
         pasloe = PasloeClient(url=_PASLOE_URL, api_key=os.environ.get("PASLOE_API_KEY", ""))
         try:
-            if job_id:
+            if job_args and job_args[0] == "tail":
+                if len(job_args) != 2:
+                    raise click.ClickException("usage: yoitsu jobs tail <job_id>")
+                job_id = job_args[1]
+                historical = await _fetch_job_history(
+                    pasloe,
+                    job_id=job_id,
+                    source=source,
+                    type_=type_,
+                )
+                if len(historical) > _TAIL_HISTORY_LIMIT:
+                    click.echo(f"[history truncated to last {_TAIL_HISTORY_LIMIT} events]")
+                    historical = historical[-_TAIL_HISTORY_LIMIT:]
+                for event in historical:
+                    click.echo(_format_event_line(event, verbose=True))
+                cursor = await _current_tail_cursor(pasloe)
+                try:
+                    while True:
+                        page, next_cursor = await pasloe.poll(
+                            cursor=cursor,
+                            source=source,
+                            type_=type_,
+                            limit=100,
+                            order="asc",
+                        )
+                        for event in page:
+                            if _event_matches_job(event, job_id):
+                                click.echo(_format_event_line(event, verbose=True))
+                        if next_cursor:
+                            cursor = next_cursor
+                        elif page:
+                            last = page[-1]
+                            cursor = f"{last.ts.isoformat()}|{last.id}"
+                        await asyncio.sleep(interval)
+                except KeyboardInterrupt:
+                    return {}
+            if job_args:
+                job_id = job_args[0]
                 detail, warnings = await _optional_live_detail(
                     trenni.get_job_strict(job_id),
                     label=f"job {job_id}",
@@ -614,7 +752,9 @@ def jobs(job_id: str | None) -> None:
             await pasloe.aclose()
 
     try:
-        _out(asyncio.run(_do()))
+        result = asyncio.run(_do())
+        if result:
+            _out(result)
     except Exception as exc:
         _fail(f"jobs query failed: {_error_detail(exc)}")
 
@@ -641,6 +781,9 @@ def events(limit: int, source: str | None, type_: str | None, task_id: str | Non
                         source=source,
                         type_=type_,
                     )
+                    if len(historical) > _TAIL_HISTORY_LIMIT:
+                        click.echo(f"[history truncated to last {_TAIL_HISTORY_LIMIT} events]")
+                        historical = historical[-_TAIL_HISTORY_LIMIT:]
                     for event in historical:
                         click.echo(_format_event_line(event))
                 cursor = await _current_tail_cursor(client)

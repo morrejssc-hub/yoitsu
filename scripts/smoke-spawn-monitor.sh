@@ -19,7 +19,7 @@ Target outcome:
 - the file must contain exactly one line with no trailing whitespace: smoke: ok
 - do not modify any other file
 
-The root task has no repo context. Use spawn to create child tasks that do the repository work. Each child task is an independent unit of work — the runtime automatically commits and pushes each child's workspace changes on completion.
+The root task has no repo context. Use spawn to create child tasks that do the repository work. Each child task is an independent unit of work — the runtime automatically commits and pushes each child workspace on completion.
 
 Each spawned child must include role, goal, budget, params.repo, params.init_branch, eval_spec.deliverables, and eval_spec.criteria.
 

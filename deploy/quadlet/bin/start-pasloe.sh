@@ -5,6 +5,8 @@ STATE_DIR="${PASLOE_STATE_DIR:-/var/lib/pasloe}"
 PASLOE_SRC="${PASLOE_SRC_ROOT:-/workspace/pasloe}"
 VENV="${STATE_DIR}/venv"
 SRC_REV_FILE="${STATE_DIR}/pasloe.rev"
+BASE_VENV="${YOITSU_BASE_VENV:-/opt/yoitsu-base/venv}"
+BASE_REV_FILE="${YOITSU_BASE_REV_DIR:-/opt/yoitsu-base/revs}/pasloe.rev"
 PIP_CACHE_DIR="${STATE_DIR}/pip-cache"
 
 export PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -37,8 +39,15 @@ current_src_rev() {
 }
 
 if [ ! -x "${VENV}/bin/python" ]; then
-  python -m venv "${VENV}"
-  "${VENV}/bin/pip" install --upgrade pip setuptools wheel
+  if [ -x "${BASE_VENV}/bin/python" ]; then
+    cp -a "${BASE_VENV}" "${VENV}"
+    if [ -f "${BASE_REV_FILE}" ]; then
+      cp "${BASE_REV_FILE}" "${SRC_REV_FILE}"
+    fi
+  else
+    python -m venv "${VENV}"
+    "${VENV}/bin/pip" install --upgrade pip setuptools wheel
+  fi
 fi
 
 current_rev="$(current_src_rev)"

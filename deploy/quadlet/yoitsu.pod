@@ -12,4 +12,3 @@ ExitPolicy=continue
 [Service]
 Restart=on-failure
 TimeoutStartSec=900
-

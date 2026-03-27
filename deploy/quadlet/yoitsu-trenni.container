@@ -5,7 +5,7 @@ Requires=yoitsu-pasloe.service podman.socket
 
 [Container]
 ContainerName=yoitsu-trenni
-Image=docker.io/library/python:3.11-slim
+Image=localhost/yoitsu-python-base:dev
 Pull=newer
 Pod=yoitsu.pod
 StartWithPod=true
