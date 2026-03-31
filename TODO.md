@@ -68,6 +68,18 @@ GitHub client
 
 ## 已完成
 
+### ADR-0004/0008/0009/0010：预算预测、任务创建、准备函数、自优化（2026-03-31）
+
+实现了预算作为预测而非强制约束、spawn 默认 planner 角色、PreparationConfig 命名、observation 事件类型和 budget_variance 发射。185 个测试全部通过。
+
+**主要更改：**
+- RoleMetadata 添加 max_cost 字段，spawn 时验证
+- 移除 cost-based termination，保留 tracking 用于 observation
+- spawn 无 role 时默认 planner
+- PreparationConfig 作为 WorkspaceConfig 别名
+- observation.budget_variance 事件发射
+- trigger evaluator scaffold
+
 ### ADR-0007：Task/Job 信息边界（2026-03-29）
 
 清理了 task/job 层级的混淆：goal 单通道、budget 单通道、spawn payload 不携带执行配置、RoleMetadataReader 提取到 yoitsu-contracts、role catalog 按 evo SHA 失效。163 个测试全部通过。
