@@ -24,3 +24,6 @@ deploy/quadlet/*.env
 __pycache__/
 *.pyc
 .venv/
+
+# Test outputs
+test-runs/
