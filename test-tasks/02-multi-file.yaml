@@ -1,0 +1,17 @@
+# Multi-file creation task
+# Tests: multiple operations in single job
+
+tasks:
+  - goal: |
+      Create two files in the smoke/ directory:
+      1. smoke/A.txt with content: "file A"
+      2. smoke/B.txt with content: "file B"
+      
+      Both files should have exactly one line with no trailing whitespace.
+      Do not modify any other file.
+    team: default
+    budget: 0.40
+    context:
+      repo: https://github.com/guan-spicy-wolf/yoitsu.git
+      init_branch: master
+      new_branch: true

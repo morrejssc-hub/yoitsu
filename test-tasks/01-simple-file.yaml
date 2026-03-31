@@ -1,0 +1,15 @@
+# Simple file creation task
+# Tests: basic job execution, git push
+
+tasks:
+  - goal: |
+      Create a file smoke/TEST-{timestamp}.txt with exactly one line: "test: ok"
+      Replace {timestamp} with current timestamp in format YYYYMMDD-HHMMSS.
+      No trailing whitespace or newline.
+      Do not modify any other file.
+    team: default
+    budget: 0.30
+    context:
+      repo: https://github.com/guan-spicy-wolf/yoitsu.git
+      init_branch: master
+      new_branch: true

@@ -1,6 +1,6 @@
 # ADR-0004: Budget System
 
-- Status: Partially Suspended (2026-03-31)
+- Status: Accepted (Revised 2026-03-31)
 - Date: 2026-03-27
 - Related: ADR-0002, ADR-0003, ADR-0010
 
