@@ -68,6 +68,21 @@ GitHub client
 
 ## 已完成
 
+### ADR-0011：Team as First-Class Isolation Boundary（2026-04-01）
+
+实现了team作为一级隔离边界：两层evo结构、TeamConfig配置、running_jobs_by_team跟踪、RuntimeContext.team字段、工具runtime_context注入。291个测试通过。
+
+**主要更改：**
+- RoleMetadata.teams字段废弃，team由目录位置决定
+- Trenni增加TeamConfig、TeamRuntimeConfig、TeamSchedulingConfig
+- JobRuntimeSpec.pod_name接受None，增加extra_networks
+- RuntimeSpecBuilder使用team配置
+- PodmanBackend处理无pod和额外网络
+- running_jobs_by_team跟踪和TeamLaunchCondition
+- RuntimeContext.team字段
+- UnifiedToolGateway支持runtime_context注入
+- RoleManager两层evo解析
+
 ### ADR-0004/0008/0009/0010：预算预测、任务创建、准备函数、自优化（2026-03-31）
 
 实现了预算作为预测而非强制约束、spawn 默认 planner 角色、PreparationConfig 命名、observation 事件类型和 budget_variance 发射。185 个测试全部通过。
