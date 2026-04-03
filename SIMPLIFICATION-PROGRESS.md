@@ -71,16 +71,21 @@
 
 ## Batch 5: Observation Loop Closure (In Progress)
 
-### Step 1: 定 observation 读模型
+### Step 1: 定 observation 读模型 ✅
 - [x] 创建 Pasloe observation domain
 - [x] 定义 BudgetVarianceDetail 读模型
 - [x] 实现时间窗口查询接口
 - [x] 实现聚合查询接口 (aggregate, by_role)
-- [ ] 创建数据库迁移
+- [x] 创建数据库迁移
 
-### Step 2: 补发射面
-- [ ] 盘点现有 observation.* 信号
-- [ ] 补齐缺口
+### Step 2: 补发射面 ✅
+- [x] 盘点现有 observation.* 信号
+  - budget_variance: trenni/supervisor._emit_budget_variance
+  - preparation_failure: 新增 palimpsest/stages/preparation.py
+  - tool_retry: 待实现（当前无 tool 重试机制）
+- [x] budget_variance 发射路径测试
+- [x] preparation_failure 发射点实现
+- [x] preparation_failure 发射路径测试
 
 ### Step 3: 激活闭环
 - [ ] 实现累积阈值触发逻辑
