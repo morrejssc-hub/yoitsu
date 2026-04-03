@@ -339,7 +339,7 @@ def _event_detail_lines(event: PasloeEvent) -> list[str]:
             if not isinstance(task, dict):
                 continue
             role = str(task.get("role") or "")
-            goal = str(task.get("goal") or task.get("prompt") or "").strip()
+            goal = str(task.get("goal") or "").strip()
             lines.append(f"    - role={role or '(none)'} goal={goal[:120]}")
         if len(tasks) > 5:
             lines.append(f"    ... truncated {len(tasks) - 5} more")
@@ -851,7 +851,7 @@ def submit(input_value: str, budget: float, team: str, as_goal: bool) -> None:
     if as_goal:
         if budget <= 0:
             _fail("Raw goal submission requires --budget > 0")
-        tasks = [{"goal": input_value, "team": team, "budget": budget, "context": {}}]
+        tasks = [{"goal": input_value, "team": team, "budget": budget}]
     else:
         try:
             raw = path.read_text()
@@ -872,24 +872,37 @@ def submit(input_value: str, budget: float, team: str, as_goal: bool) -> None:
         try:
             for task in tasks:
                 raw = dict(task)
-                goal = raw.pop("goal", raw.pop("task", ""))
-                team = str(raw.pop("team", "") or "").strip() or "default"
+                # Canonical fields only
+                goal = raw.pop("goal", "")
+                if not goal:
+                    failed += 1
+                    errors.append("missing goal")
+                    continue
+                role = raw.pop("role", "")
                 budget = raw.pop("budget", 0.0)
-                
-                context = raw.pop("context", raw)
-                if not isinstance(context, dict):
-                    context = {"value": context}
-                
-                if not context.get("repo") and context.get("repo_url"):
-                    context["repo"] = context.pop("repo_url")
-                if not context.get("init_branch") and context.get("branch"):
-                    context["init_branch"] = context.pop("branch")
+                repo = raw.pop("repo", "")
+                init_branch = raw.pop("init_branch", "")
+                team = raw.pop("team", "default") or "default"
+                params = raw.pop("params", {})
+                eval_spec = raw.pop("eval_spec", None)
+                sha = raw.pop("sha", None)
+
+                # Any remaining keys go into params ONLY if they're not task semantics
+                forbidden = {"goal", "budget", "repo", "repo_url", "branch", "init_branch", "task", "prompt"}
+                extra = {k: v for k, v in raw.items() if k not in forbidden}
+                if extra:
+                    params = {**params, **extra}
 
                 payload = {
-                    "team": team,
                     "goal": goal,
+                    "role": role,
                     "budget": float(budget) if isinstance(budget, (int, float)) else 0.0,
-                    "context": context,
+                    "repo": repo,
+                    "init_branch": init_branch,
+                    "team": team,
+                    "params": params,
+                    "sha": sha,
+                    "eval_spec": eval_spec,
                 }
 
                 event_id = await client.post_event(type_="trigger.external.received", data=payload)

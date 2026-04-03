@@ -1,12 +1,15 @@
 tasks:
-  - task: "Add unit tests for the user authentication module"
+  - goal: "Add unit tests for the user authentication module"
     role: "default"
-    repo_url: "https://github.com/your-org/your-repo.git"
+    repo: "https://github.com/your-org/your-repo.git"
+    budget: 1.0
 
-  - task: "Fix the memory leak in the cache invalidation logic"
+  - goal: "Fix the memory leak in the cache invalidation logic"
     role: "default"
-    repo_url: "https://github.com/your-org/your-repo.git"
+    repo: "https://github.com/your-org/your-repo.git"
+    budget: 1.0
 
-  - task: "Implement rate limiting for the API endpoints"
+  - goal: "Implement rate limiting for the API endpoints"
     role: "default"
-    repo_url: "https://github.com/your-org/your-repo.git"
+    repo: "https://github.com/your-org/your-repo.git"
+    budget: 1.0

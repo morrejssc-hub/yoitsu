@@ -13,7 +13,6 @@ tasks:
       push commits, and do not edit production code. If you need scratch notes,
       keep them local to the temporary workspace. Finish with a concise
       structured summary and operator recommendation, then stop calling tools.
-    context:
-      role: default
-      repo: ""
-      init_branch: main
+    role: default
+    repo: ""
+    init_branch: main

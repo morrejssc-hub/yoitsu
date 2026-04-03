@@ -21,8 +21,8 @@ tasks:
       - include `role`
       - include `goal`
       - include `budget`
-      - include `params.repo`
-      - include `params.branch` or `params.init_branch`
+      - include `repo`
+      - include `init_branch`
       - include `eval_spec.deliverables`
       - include `eval_spec.criteria`
 
@@ -39,7 +39,7 @@ tasks:
       - no duplicate follow-up tasks are spawned after both required child tasks succeed
     team: default
     budget: 0.80
-    context:
-      repo: https://github.com/guan-spicy-wolf/yoitsu.git
-      init_branch: master
+    repo: https://github.com/guan-spicy-wolf/yoitsu.git
+    init_branch: master
+    params:
       new_branch: true

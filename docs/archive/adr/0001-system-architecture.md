@@ -1,8 +1,12 @@
 # ADR-0001: System Architecture
 
-- Status: Accepted
+- Status: Accepted (Revised 2026-04-02)
 - Date: 2026-03-27
-- Related: ADR-0002, ADR-0003, ADR-0004
+- Revised: 2026-04-02
+- Related: ADR-0002, ADR-0003, ADR-0004, ADR-0013
+
+Note: The normative system entry point is [docs/architecture.md](../architecture.md).
+This ADR retains the individual design decisions and their rationale.
 
 ## Context
 
@@ -11,15 +15,21 @@ jobs and tasks, persists and replays events through a durable event store,
 and allows the agents themselves to modify the logic that governs their
 execution.
 
-The architecture has three primary components:
+The architecture has four primary components:
 
 - **Pasloe** — the event store and HTTP event bus
 - **Trenni** — the task scheduler and supervisor
 - **Palimpsest** — the agent runtime (job executor)
+- **Artifact Store** — content-addressed immutable object store (ADR-0013)
 
-A fourth component, **evo**, is a versioned directory of Python modules that
+A fifth component, **evo**, is a versioned directory of Python modules that
 define how jobs execute. It is not a separate service — it is the evolvable
 layer consumed by Palimpsest at runtime.
+
+The system has two authoritative persistence layers: the Pasloe event
+stream (records what happened) and the artifact store (records what was
+produced). Everything else — workspaces, git branches, in-memory state —
+is derived or ephemeral.
 
 ## Decisions
 

@@ -8,15 +8,14 @@ tasks:
       Bump the patch version by one (e.g. "0.1.3" -> "0.1.4").
 
       Requirements:
-      - The root task has no `repo` context. You must use `spawn` to create
+      - The root task has no `repo`. You must use `spawn` to create
         child tasks that do the repository work.
       - Each child task is an independent unit of work. The runtime
         automatically commits and pushes each child's workspace changes when
         the child completes, so a child task should focus on making and
         verifying changes — not on committing or pushing.
       - Each spawned child must include: `role`, `goal`, `budget`,
-        `params.repo`, `params.init_branch`, `eval_spec.deliverables`,
-        and `eval_spec.criteria`.
+        `repo`, `init_branch`, `eval_spec.deliverables`, and `eval_spec.criteria`.
       - Do not claim completion from prior smoke artifacts.
 
       Continuation:
@@ -24,4 +23,3 @@ tasks:
       - If the version bump is already done, do not spawn more tasks.
     team: default
     budget: 1.20
-    context: {}

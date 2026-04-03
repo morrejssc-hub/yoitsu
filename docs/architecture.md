@@ -1,315 +1,47 @@
-# Yoitsu System Architecture
+# Yoitsu 架构指南
 
-Date: 2026-04-02
-Status: Normative baseline. Supersedes prior system-level descriptions.
+Yoitsu 是一个围绕“事件流”与“产物存储”（Artifacts）构建的自我演进 Agent 架构。
+当前所有的设计决策收敛于一个核心思想：**系统的唯一真实数据源仅为 `Event Store` 与 `Artifact Store`，任何运行时内存、工作区缓存均属于无需持久化的临时物化视图。**
 
-## 1. Scope and Authority
+所有的具体接口、数据模型流转与文件层职责均已在相关代码的 Docstrings 中详细声明，请直接参阅代码。本指南仅提供最高维度的认知模型。
 
-This document is the single normative entry point for the Yoitsu system
-design. It describes what the system IS in the current codebase. In-flight
-ADRs are called out explicitly when they describe accepted direction that
-has not yet landed in code.
+## 核心设计理念：双真实数据源 (Dual Source of Truth)
 
-Normative sources, in order of authority:
+1. **Pasloe (Event Store)**：系统的时序大脑。采用只追加模式（Append-Only）记录所有生命周期事件、观察行为、工具调用以及大模型的判断。它回答“发生了什么”。
+2. **Artifact Store (产出内容寻址)**：系统的物质沉淀。使用基于内容寻址的对象存储，承载一切 Blob 与目录树快照（Tree）。它回答“产生了什么对象”。注意：Git 等其他外围机制被视为向下兼容的数据接收者（Compatibility Receipt），而不是规范源。
 
-1. Current code (four repositories + evo/)
-2. This document
-3. In-flight ADRs in `docs/adr/` for design areas not yet folded into this
-   baseline
+> [!IMPORTANT]
+> 任何任务逻辑的中间状态如果不记录到上述两者之一，便不应该对下一步决策产生影响。执行器内部不存在长活（Long-Lived）状态上下文。
 
-When this document conflicts with code, code wins. Historical ADRs in
-`docs/adr/archive/` and materials in `docs/archive/` are retained for
-decision history, not as day-to-day entry points.
+## 系统四大组件
 
-Non-normative companion documents:
+- **Trenni 控制面 (Control Plane)**：绝对确定性的事件驱动调度引擎。它通过将 Pasloe 中的事件池以及 Artifact 元数据进行归约，计算得出下一步需要执行什么是 `Attempt` 还是终止任务，绝不干涉任务的业务语境解释。
+- **Palimpsest 执行器 (Attempt Runner)**：一次性（Single-Attempt）、短寿命的无状态执行容器。负责接收确定的 Attempt 契约（输入包含 Artifact 引用），物化本地工作区（Workspace）执行代码逻辑、发配大模型请求，并最终将产出固化回事件与 Artifacts，随后彻底抛弃本地实例。
+- **Pasloe 存储底座**：事件总线系统。在任务语义层提供盲派发。
+- **yoitsu-contracts**：隔离并收拢上述三个执行实体与边界的共有数据契约、协议与事件基础原型定义。
 
-- [component-map.md](component-map.md) -- file paths, directory layout,
-  event type table
-- [redesign-evaluation.md](redesign-evaluation.md) -- why certain
-  alternative designs were rejected
-- [design-principles.md](design-principles.md) -- extracted invariants and
-  conventions
-- [test-operations.md](test-operations.md) -- long-running test and
-  operator procedures
+## 编排与信息边界
 
-## 2. System Identity and Current Durable State
+**Spawn 是唯一的编排原语。** 系统没有预定义的 DAG 或工作流引擎。Agent 调用 `spawn(tasks=[...])` → Trenni 展开为子 Task + Job + 可选 Join Job。任务分解决策属于 Planner 角色（LLM 判断），不属于 Trenni。
 
-Yoitsu is a self-evolving LLM agent system. It decomposes goals into tasks,
-executes them via containerized agent jobs, evaluates results, and allows
-agents to modify the logic governing their own execution.
+**系统中的每个字段严格归属于三类之一：**
+1. **任务语义** (goal, repo, budget, eval_spec, team) — 由 Trigger 或 Spawn Payload 携带，存于 TaskRecord
+2. **执行配置** (model, tools, publication strategy) — 由 `evo/` 中的 Role 定义派生，Spawn Payload 不可设置
+3. **运行时身份** (job_id, evo_sha, container_name) — 由 Trenni 在 Job 创建时机械分配
 
-The current code has one authoritative system-wide persistence layer:
+**双层裁定 (Two-Layer Verdict)：** 每个终结 Task 同时携带确定性的结构裁定（跑了什么、结果如何）和可选的语义裁定（目标是否达成），详见 ADR-0002。
 
-- **Pasloe event stream** -- records what happened: task lifecycle, job
-  outcomes, observations, spawn requests, LLM and tool calls.
+## 组件间协作模式
 
-For git-backed jobs, durable output is additionally published through git
-and surfaced as `git_ref` in `agent.job.completed`. That gives the system a
-usable publication path today, but it is not a general-purpose physical
-artifact layer.
+- **Pasloe 两阶段流水线**：事件写入先获得 `accepted`（持久性边界），随后异步进入 `committed`（消费者可见）。生产者仅依赖 accepted；Trenni 仅消费 committed。这个分离保证宕机恢复时不会丢失已确认但未投影的事件。
+- **Trenni 摄取/执行分相**：Supervisor 循环分为摄取阶段（确定性事件路由与状态变更）和执行阶段（容器启动等副作用）。摄取失败回滚 cursor；执行失败不回滚。这使得重放和检查点语义简洁可靠。
+- **Trenni → Palimpsest 单向推送**：Trenni 将 `JobConfig` 序列化为 base64 注入容器环境变量。Palimpsest 通过 Pasloe 发出事件回传。两者之间没有直接通信通道。
 
-Everything else is derived or ephemeral:
+## 可演化隔离区 (Evo Layer)
 
-| Category | Example | Status |
-|----------|---------|--------|
-| Execution substrate | Workspace directories | Private copy, disposable |
-| Scheduler state | Trenni TaskRecord, ready queue | Rebuilt from event replay |
-| External coordination | Git branches, PRs, git_ref | Durable for git-backed jobs only |
-| Process-internal | Return values, runtime memory | Lost on restart |
+所有的逻辑分支迭代和 Agent 聪明程度的提升都在代码根目录的 `evo/` 中进行。这是唯一个允许 Agent 主动修改从而完成自我迭代的代码区域。
+Trenni 采用强力的隔离设计，将 `team` 视为一等隔离边界（例如：不同的容器镜像、环境变量与权限约束，并通过物理路径定位 `evo/teams/<team>/...` 层叠执行策略）。这种设计天然适配因子化任务隔离与未来自治扩展。
 
-Git is therefore both the current publication mechanism and the main
-external collaboration protocol. ADR-0013 proposes an artifact store as a
-future second persistence layer, but that subsystem is not implemented yet.
+## 自优化闭环
 
-## 3. Component Boundaries
-
-### 3.1 Pasloe -- Event Store
-
-Append-only, schema-agnostic event log.
-
-**Responsibilities:**
-- Durable ingest with `accepted` acknowledgement
-- Committed event visibility for consumers
-- Domain detail tables (jobs, tasks, llm, tools) as indexed projections
-- Webhook fan-out to consumers
-
-**Does not do:** task semantics, scheduling, artifact storage, business
-logic.
-
-Reference: ADR-0001 sections 6, 9, 10.
-
-### 3.2 Trenni -- Scheduler and Control Plane
-
-Deterministic, non-evolvable task control plane.
-
-**Responsibilities:**
-- Task state machine (pending -> running -> evaluating -> terminal)
-- Spawn expansion (spawn_request -> child tasks + jobs + join job)
-- Condition evaluation (TaskIs, All, Any, Not)
-- Job queue drain and container launch via PodmanBackend
-- Replay and checkpoint (state reconstruction from committed events)
-- Team isolation: per-team runtime profiles, scheduling constraints,
-  evo layer resolution (ADR-0011)
-- JobConfig assembly from Trenni defaults, spawn semantics, and team runtime
-  settings
-
-**Does not do:** execute agent logic, consume evo/ code, make semantic
-task decomposition decisions. Trenni treats spawn payloads as opaque blobs.
-It has no dependency on evo.
-
-Reference: ADR-0001 sections 5, 7; ADR-0011 D1, D4, D5.
-
-### 3.3 Palimpsest -- Job Executor
-
-Single-job, four-stage pipeline executor. Runs inside Podman containers.
-Each job is a single attempt: short-lived, disposable, allowed to fail
-honestly.
-
-**Responsibilities:**
-- Resolve role function from evo/ at pinned SHA
-- Execute four-stage pipeline (see section 5)
-- Emit agent.* events throughout execution
-- Produce `git_ref` on completion when branch publication runs; planner and
-  evaluator roles normally skip publication
-
-**Does not do:** task-level orchestration, scheduling, sibling awareness,
-retry decisions.
-
-Reference: ADR-0003 sections 1-5; ADR-0009.
-
-### 3.4 yoitsu-contracts -- Shared Types
-
-Cross-repository boundary definitions consumed by all components:
-
-- Event schemas (BaseEvent, all *Data models)
-- Configuration types (JobConfig, TriggerData, SpawnTaskData)
-- Condition serialization (TaskIs, All, Any, Not)
-- Role metadata (RoleMetadataReader)
-- Observation event types (budget_variance, tool_retry, etc.)
-- Preparation/publication config types shared between Trenni and Palimpsest
-
-### 3.5 Artifact Store (ADR-0013)
-
-Artifact contracts have landed in `yoitsu-contracts`:
-
-- `ArtifactRef` and `ArtifactBinding` models define the physical identifier
-  and semantic binding structure.
-- `JobCompletedData` accepts `artifact_bindings` as an optional field with
-  `[]` default.
-
-**Backend and runtime wiring are still pending.** There is no
-`ArtifactBackend` implementation, no artifact store config in Trenni, no
-workspace materialization from artifact refs, and no artifact publication
-in Palimpsest. Git-based publication remains the only active output
-channel.
-
-Reference: ADR-0013.
-
-## 4. Task, Job, and Spawn Semantics
-
-### Task (logical work unit)
-
-Managed exclusively by Trenni. States:
-
-```
-pending -> running -> evaluating -> completed
-                                 -> failed
-                                 -> partial
-                                 -> cancelled
-                                 -> eval_failed
-```
-
-Every terminal task carries a two-layer result:
-
-- **Structural verdict** (always present): derived from job terminal states.
-  Deterministic, computed without LLM.
-- **Semantic verdict** (optional): produced by eval job
-  (pass / fail / unknown).
-
-Reference: ADR-0002 sections 1, 2, 3.
-
-### Job (execution unit)
-
-One Palimpsest run inside one container. Terminal events:
-agent.job.completed, agent.job.failed, agent.job.cancelled.
-
-A job completing does not mean its task is complete. Palimpsest has no task
-awareness.
-
-### Spawn (sole orchestration primitive)
-
-The agent calls spawn(tasks=[...]) during interaction. Trenni mechanically
-expands this into child tasks, child jobs, and an optional join job. There
-are no pre-defined DAGs or workflow definitions.
-
-The planner role decides decomposition: which roles, what goals, what
-budgets, what eval criteria. Trenni executes the mechanics.
-
-Task IDs are hierarchical and deterministic:
-```
-018f4e3ab2c17d3e              # root (UUIDv7 prefix)
-018f4e3ab2c17d3e/3afw         # child (base32 hash)
-018f4e3ab2c17d3e/3afw/b2er    # grandchild
-```
-
-Reference: ADR-0001 section 4; ADR-0002 sections 5, 6; ADR-0007; ADR-0008.
-
-## 5. Palimpsest Four-Stage Runtime
-
-Every job executes through four stages. The ordering is a causal dependency
-chain: each stage requires the prior stage's output. It is not configurable
-because it cannot be otherwise.
-
-| Stage | Input | Output | Evolvable via |
-|-------|-------|--------|--------------|
-| Preparation | Job config, repo/init_branch, role params | Private workspace, JobStartedData, RuntimeContext resources | preparation_fn in evo/ |
-| Context | Workspace, job config, Pasloe events | AgentContext (prompt + tools) | context_fn in evo/ |
-| Interaction | AgentContext | Tool calls, LLM responses, candidate summary | Role definition, tools in evo/ |
-| Publication | Workspace, interaction result | Optional git_ref | publication_fn in evo/ |
-
-**Preparation** clones a git repo or creates a repoless scratch workspace.
-It may also establish job-scoped resources through `RuntimeContext`. The
-workspace is a private copy; it is not the truth.
-
-**Context** assembles the agent's prompt and available tools from job
-config, workspace state, Pasloe queries, and evo/ providers.
-
-**Interaction** runs the LLM loop with tool execution. Exits via idle
-detection (two consecutive no-tool-call responses) or budget exhaustion.
-Emits agent.llm.* and agent.tool.* events throughout.
-
-**Publication** commits and pushes workspace output when the role uses
-branch publication, and returns `git_ref` (`branch:sha`). Planner and
-evaluator roles normally use `strategy="skip"`. Publication failure = job
-failure, never silent.
-
-Variation between task types lives in stage implementations (different
-preparation_fn, different publication_fn), not in stage topology.
-
-Reference: ADR-0003; ADR-0009; ADR-0002 sections 8, 9.
-
-## 6. Current Git-Based Publication
-
-```
-publication_fn produces:
-  -> git_ref             (branch publication)
-  -> None                (intentional skip / repoless case)
-```
-
-Today, productive git-backed roles publish by committing the workspace and
-pushing the active branch. `agent.job.completed` then carries `git_ref`,
-summary, status, and code. Planner and evaluator roles usually skip
-publication entirely, and repoless workspaces also return no `git_ref`.
-
-There is no implemented artifact binding channel yet. ADR-0013 is the
-planned migration path from git-only publication to a generalized physical
-artifact layer.
-
-Reference: ADR-0003 section 5; ADR-0013.
-
-## 7. Evolvable and Non-Evolvable Boundaries
-
-### Evolvable (lives in evo/, agents can modify)
-
-| Artifact | What it controls |
-|----------|-----------------|
-| Role functions | JobSpec composition: which preparation, context, tools, publication |
-| Preparation functions | Workspace setup: what to clone/materialize, what to install |
-| Publication functions | Output delivery: what to store, where to push |
-| Context providers | Prompt assembly: what information the agent sees |
-| Tools | Agent capabilities: what actions the agent can take |
-| Prompts | System/user prompt templates |
-
-Two-layer structure (ADR-0011): global evo/ + evo/teams/<team>/ with
-team-specific artifacts shadowing global by name.
-
-### Non-evolvable (runtime skeleton, not modified by agents)
-
-| Component | Why it is fixed |
-|-----------|----------------|
-| Trenni state machine | Trust boundary: deterministic control plane that works correctly even when evo/ has bugs |
-| Palimpsest four-stage pipeline | Causal dependency chain: stages cannot be reordered |
-| Pasloe event pipeline | Infrastructure: append-only log semantics |
-| Condition evaluation | Mechanical: TaskIs, All, Any, Not |
-| Spawn expansion | Mechanical: parent -> children + join |
-
-The clean separation means: a bad evo/ change can break one job. It cannot
-break the scheduler or the event store. The system
-can detect the failure (via events) and continue operating.
-
-Self-optimization (ADR-0010) modifies evo/ through normal tasks. It uses
-budget prediction accuracy as its primary feedback signal. There is no
-special optimization mode or privileged access.
-
-Reference: ADR-0003 sections 3, 4; ADR-0010; ADR-0011 D2.
-
-## 8. Companion Documents
-
-### Normative
-
-- **This document**: the normative system baseline.
-- **In-flight ADRs** (`docs/adr/`): open design areas not yet fully absorbed
-  into this baseline.
-
-### Reference (non-normative, but maintained)
-
-- [component-map.md](component-map.md): file paths, directory structure,
-  event type table, configuration template, data flow diagram.
-- [design-principles.md](design-principles.md): extracted invariants,
-  conventions, and the publication guarantee matrix.
-- [redesign-evaluation.md](redesign-evaluation.md): accepted vs rejected
-  redesign directions and rationale.
-- [test-operations.md](test-operations.md): deployment and long-running test
-  procedures.
-
-### Working List
-
-- [TODO-open-items.md](TODO-open-items.md): unresolved implementation and
-  cleanup items.
-
-### Historical (retained for context, not authoritative)
-
-- `docs/adr/archive/`: accepted or absorbed ADRs retained as decision
-  history.
-- `docs/archive/`: superseded drafts, plans, reviews, exploratory notes,
-  and prior AI-generated consolidation attempts.
+系统通过正常的任务管道实现自我改进——没有特殊的优化模式。结构化观察信号（`observation.*`）在执行过程中机械发出，累积到阈值后自动触发 Review Task，产出改进提案，提案成为修改 `evo/` 的普通优化 Task。预算预测精度（而非绝对成本）作为系统健康度的代理指标。详见 ADR-0010。
