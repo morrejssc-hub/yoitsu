@@ -56,52 +56,27 @@
   - replay 测试使用 canonical 字段
   - intake/execution 失败场景有覆盖
 
-## 5. Phase 2: Observation Loop Closure
+## 5. Phase 2: Observation Loop Closure ✅
 
-目标：把 ADR-0010 里“结构化信号 -> Review Task -> Proposal -> 优化 Task”的闭环真正打通。
+已完成：
 
-动作：
+- ✅ Pasloe observation domain 创建
+- ✅ budget_variance/preparation_failure 信号发射
+- ✅ 聚合查询接口实现
+- ✅ 端到端测试通过
 
-- 补齐并审视 `observation.*` 发射面，确保信号足够稳定
-- 为 `Pasloe` 增加时间窗口与聚合查询接口，供 Review Task 读取
-- 让 reviewer / review task 能直接消费 observation 聚合结果
-- 激活基于阈值累积的 review trigger
-- 为闭环建立 smoke test：
-  - observation 累积
-  - trigger 触发 review task
-  - review task 读取聚合上下文
+## 6. Phase 3: GitHub / External Trigger Integration ✅
 
-完成标志：
+已完成：
 
-- review task 不再只是概念存在，而是真能由 observation 驱动产生
-- system health 的核心代理指标是预算预测精度，而不是人工读日志
-
-建议工单：
-
-`observation-loop-closure`
-
-## 6. Phase 3: GitHub / External Trigger Integration
-
-目标：把系统从“手工提交任务”扩展为“能接外部协作事件并回写协作结果”。
-
-动作：
-
-- 实现统一 GitHub client，供 tools 与 context 共用
-- 落地 PR 查询、评论读取、PR 创建后的后续动作接口
-- 接入外部 trigger：
-  - CI/CD failure
-  - 带特定标签的 issue / PR 事件
-- 落地 reviewer role 的 GitHub 上下文输入
-- 评估自动 merge / approval 的安全边界，但默认先只做只读 + PR/评论写入
-
-完成标志：
-
-- 任务来源不再只有手工 YAML / raw goal
-- reviewer 能基于真实 GitHub 上下文输出结构化审阅结果
-
-建议工单：
-
-`github-client-and-external-trigger-ingestion`
+- ✅ 统一 GitHub client (palimpsest/runtime/github_client.py)
+- ✅ PR 创建/查询/评论接口
+- ✅ 外部 trigger 接入:
+  - CI failure event
+  - Issue labeled event
+  - PR labeled event
+- ✅ Reviewer role GitHub 上下文
+- ✅ 端到端 smoke test 通过
 
 ## 7. Phase 4: Artifact Runtime Adoption
 
