@@ -82,9 +82,19 @@
 - [x] 更新 create_pr tool 使用 GitHubClient
 - [x] 添加 GitHubClient 测试
 
-### Step 2: 外部 Trigger 接入
-- [ ] 定义外部事件格式
-- [ ] 添加 external trigger handler
+### Step 2: 外部 Trigger 接入 ✅
+- [x] 定义外部事件格式
+  - CIFailureEvent
+  - IssueLabeledEvent
+  - PRLabeledEvent
+- [x] 添加 external trigger handler
+  - supervisor._handle_external_event
+  - supervisor._process_trigger
+- [x] 事件转换逻辑
+  - ci_failure_to_trigger
+  - issue_labeled_to_trigger
+  - pr_labeled_to_trigger
+- [x] Label-to-role mapping
 
 ### Step 3: Reviewer GitHub 上下文
 - [ ] 为 reviewer role 提供 GitHub 上下文
