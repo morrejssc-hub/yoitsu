@@ -882,16 +882,24 @@ def submit(input_value: str, budget: float, team: str, as_goal: bool) -> None:
                 budget = raw.pop("budget", 0.0)
                 repo = raw.pop("repo", "")
                 init_branch = raw.pop("init_branch", "")
-                team = raw.pop("team", "default") or "default"
+                team_val = raw.pop("team", "") or "default"
                 params = raw.pop("params", {})
                 eval_spec = raw.pop("eval_spec", None)
                 sha = raw.pop("sha", None)
 
-                # Any remaining keys go into params ONLY if they're not task semantics
-                forbidden = {"goal", "budget", "repo", "repo_url", "branch", "init_branch", "task", "prompt"}
-                extra = {k: v for k, v in raw.items() if k not in forbidden}
-                if extra:
-                    params = {**params, **extra}
+                # Check for forbidden legacy fields
+                forbidden = {"prompt", "task", "repo_url", "branch", "context"}
+                found = forbidden & set(raw.keys())
+                if found:
+                    failed += 1
+                    errors.append(f"legacy field(s) not allowed: {found}")
+                    continue
+
+                # Check for any other unknown fields
+                if raw:
+                    failed += 1
+                    errors.append(f"unknown field(s): {set(raw.keys())}")
+                    continue
 
                 payload = {
                     "goal": goal,
@@ -899,7 +907,7 @@ def submit(input_value: str, budget: float, team: str, as_goal: bool) -> None:
                     "budget": float(budget) if isinstance(budget, (int, float)) else 0.0,
                     "repo": repo,
                     "init_branch": init_branch,
-                    "team": team,
+                    "team": team_val,
                     "params": params,
                     "sha": sha,
                     "eval_spec": eval_spec,

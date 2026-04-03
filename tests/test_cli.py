@@ -536,7 +536,7 @@ class TestSubmit:
     def test_submit_posts_all_tasks(self, tmp_path, monkeypatch):
         monkeypatch.setenv("PASLOE_API_KEY", "k")
         f = tmp_path / "tasks.yaml"
-        f.write_text("tasks:\n  - goal: hello\n    team: backend\n    budget: 0.9\n    context:\n      role: default\n")
+        f.write_text("tasks:\n  - goal: hello\n    team: backend\n    budget: 0.9\n    role: default\n")
 
         with patch("yoitsu.client.PasloeClient.post_event",
                    new=AsyncMock(return_value="event-id-1")) as mock_post, \
@@ -553,7 +553,7 @@ class TestSubmit:
         assert args["data"]["goal"] == "hello"
         assert args["data"]["team"] == "backend"
         assert args["data"]["budget"] == 0.9
-        assert args["data"]["context"]["role"] == "default"
+        assert args["data"]["role"] == "default"
 
     def test_submit_normalizes_repo_url_aliases(self, tmp_path, monkeypatch):
         monkeypatch.setenv("PASLOE_API_KEY", "k")
@@ -561,10 +561,9 @@ class TestSubmit:
         f.write_text(
             "tasks:\n"
             "  - goal: hello\n"
-            "    context:\n"
-            "      role: default\n"
-            "      repo_url: /tmp/repo\n"
-            "      branch: dev\n"
+            "    role: default\n"
+            "    repo: /tmp/repo\n"
+            "    init_branch: dev\n"
         )
 
         with (
@@ -576,13 +575,13 @@ class TestSubmit:
 
         assert r.exit_code == 0
         payload = mock_post.await_args.kwargs["data"]
-        assert payload["context"]["repo"] == "/tmp/repo"
-        assert payload["context"]["init_branch"] == "dev"
+        assert payload["repo"] == "/tmp/repo"
+        assert payload["init_branch"] == "dev"
 
     def test_submit_counts_failures(self, tmp_path, monkeypatch):
         monkeypatch.setenv("PASLOE_API_KEY", "k")
         f = tmp_path / "tasks.yaml"
-        f.write_text("tasks:\n  - task: t1\n  - task: t2\n")
+        f.write_text("tasks:\n  - goal: t1\n  - goal: t2\n")
 
         with patch("yoitsu.client.PasloeClient.post_event",
                    new=AsyncMock(side_effect=[None, "id-2"])), \
