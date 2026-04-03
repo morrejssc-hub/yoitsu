@@ -46,17 +46,17 @@
 - [x] 简化 replay 逻辑 (不再手动逐字段重建)
 - [x] Budget replay fidelity 已修复
 
-## Batch 4: Runtime Hardening (In Progress)
+## Batch 4: Runtime Hardening ✅
 
 ### Task 1: Intake / Execution 分相隔离
-- [ ] 分析当前 intake/execution 边界
-- [ ] 明确 intake path 只做事件验证和 spawn planning
-- [ ] 明确 execution path 只做 runtime 操作
-- [ ] 分离错误处理逻辑
+- [x] 分析当前 intake/execution 边界
+- [x] 明确 intake path 只做事件验证和 spawn planning
+- [x] 明确 execution path 只做 runtime 操作
+- [x] 分离错误处理逻辑
 
 ### Task 2: Tool 子进程隔离与硬超时
-- [ ] 评估当前 builtin tools 风险等级
-- [ ] 为高风险工具增加超时机制
+- [x] 评估当前 builtin tools 风险等级
+- [x] 为高风险工具增加超时机制
 
 ### Task 3: Budget 不变量补齐 ✅
 - [x] Budget >= 0 验证 (ge=0.0 constraint)
@@ -68,6 +68,24 @@
 - [x] Execution 失败场景测试 (launch 失败 cleanup)
 - [x] Replay 路径测试 (使用 canonical 字段)
 - [x] Cleanup 路径测试 (container 清理)
+
+## Batch 5: Observation Loop Closure (In Progress)
+
+### Step 1: 定 observation 读模型
+- [x] 创建 Pasloe observation domain
+- [x] 定义 BudgetVarianceDetail 读模型
+- [x] 实现时间窗口查询接口
+- [x] 实现聚合查询接口 (aggregate, by_role)
+- [ ] 创建数据库迁移
+
+### Step 2: 补发射面
+- [ ] 盘点现有 observation.* 信号
+- [ ] 补齐缺口
+
+### Step 3: 激活闭环
+- [ ] 实现累积阈值触发逻辑
+- [ ] Review Task 读取聚合结果
+- [ ] 端到端 smoke test
 
 ## 验收状态
 
