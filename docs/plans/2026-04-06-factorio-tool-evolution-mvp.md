@@ -4,7 +4,7 @@
 
 **Architecture:**
 - factorio-agent 仓库本身充当 evo（workaround，Phase 2 再做 multi-bundle）
-- 共享 host 上的 factorio headless server，preparation_fn 通过 RCON 批量加载 evo 脚本
+- 共享 host 上的 factorio headless server，preparation_fn 连接 RCON；现有脚本（使用 require）走 mod 预加载，新动态脚本（implementer 产出）按需 register
 - worker（team=factorio，串行锁）暴露 1 个 dispatcher tool `factorio_call_script`
 - implementer（team=default，可并发）写 Lua 文件，路径白名单限定到 teams/factorio/scripts/
 - 新增 2 个 observation 信号（tool_repetition / context_late_lookup），保持独立模型
@@ -369,21 +369,22 @@ def run_interaction_loop(...):
     
     # Loop 结束，扫描 pattern
     from palimpsest.runtime.tool_pattern import detect_repetition
+    from yoitsu_contracts.observation import ToolRepetitionData
+    
     repetitions = detect_repetition(tool_call_history)
     for r in repetitions:
-        gateway.emit_observation(
-            event_type="observation.tool_repetition",
-            data={
-                "job_id": job_id,
-                "task_id": task_id,
-                "role": role_name,
-                "team": team,
-                "tool_name": r.tool_name,
-                "call_count": r.call_count,
-                "arg_pattern": r.arg_pattern,
-                "similarity": r.similarity,
-            },
+        # 构造 ToolRepetitionData 事件并通过 gateway.emit() 发送
+        event = ToolRepetitionData(
+            job_id=job_id,
+            task_id=task_id,
+            role=role_name,
+            team=team,
+            tool_name=r.tool_name,
+            call_count=r.call_count,
+            arg_pattern=r.arg_pattern,
+            similarity=r.similarity,
         )
+        gateway.emit(event)
 ```
 
 **Step 3: 单元测试**
@@ -740,9 +741,9 @@ def worker(**params):
 
 ## 可用脚本
 
-下面是当前可用的脚本列表（由 context provider 动态注入）：
+下面是当前可用的脚本列表（由 context provider 动态注入，追加到 task 消息中）：
 
-<!-- factorio_scripts section will be appended here by build_context -->
+<!-- factorio_scripts section content will be appended to task message by build_context -->
 
 ## 工作流程
 
@@ -757,7 +758,7 @@ def worker(**params):
 - 如果脚本返回 `[TRUNCATED 4KB]`，说明输出过大，考虑分页或写文件。
 ```
 
-注意：`{factorio_scripts}` 占位符不会被 build_context 替换。dynamic section 内容会追加到 system prompt 之后，作为独立段落。
+注意：dynamic section 内容会追加到 task 消息（不是 system prompt），作为独立段落。
 
 **Verification:**
 ```bash
@@ -767,56 +768,15 @@ python -c "from teams.factorio.roles.worker import worker; print(worker())"
 
 ---
 
-## Task 7: 实现 implementer role + api_search tool
+## Task 7: 实现 implementer role
 
 **Repo:** `/home/holo/factorio-agent`
 
 **Files:**
 - `teams/factorio/roles/implementer.py`
-- `teams/factorio/tools/api_search.py`
-- `teams/factorio/tools/api_detail.py`
 - `teams/factorio/prompts/implementer.md`
 
-**Step 1: api_search / api_detail tools**
-
-```python
-# teams/factorio/tools/api_search.py
-from palimpsest.runtime.tools import tool, ToolResult
-from agent.api_docs import ApiIndex
-
-_INDEX = None
-def _get_index():
-    global _INDEX
-    if _INDEX is None:
-        _INDEX = ApiIndex()
-        _INDEX.load()
-    return _INDEX
-
-@tool
-def api_search(query: str) -> ToolResult:
-    """Search Factorio Lua API for classes/methods matching query."""
-    results = _get_index().search(query, limit=30)
-    lines = [f"{r['name']} ({r['kind']}) — {r['summary']}" for r in results]
-    return ToolResult(success=True, output="\n".join(lines) if lines else "No results")
-
-@tool
-def api_detail(name: str) -> ToolResult:
-    """Get full details for a specific API entry."""
-    detail = _get_index().detail(name)
-    if not detail:
-        return ToolResult(success=False, output=f"Not found: {name}")
-    
-    lines = [
-        f"Name: {detail['name']}",
-        f"Kind: {detail['kind']}",
-        f"Description: {detail['description']}",
-    ]
-    if "type_info" in detail:
-        lines.append(f"Type: {detail['type_info']}")
-    return ToolResult(success=True, output="\n".join(lines))
-```
-
-**Step 2: implementer role**
+**Step 1: implementer role**
 
 ```python
 # teams/factorio/roles/implementer.py
@@ -877,17 +837,16 @@ def implementer(**params):
 
 ## 当前脚本目录
 
-下面是当前可用的脚本列表（由 context provider 动态注入）：
+下面是当前可用的脚本列表（由 context provider 动态注入，追加到 task 消息中）：
 
-<!-- factorio_scripts section will be appended here by build_context -->
+<!-- factorio_scripts section content will be appended to task message by build_context -->
 
 ## 工作流程
 
 1. 理解目标（goal）—— 通常是"在 teams/factorio/scripts/actions/ 下新增一个封装脚本"
-2. 用 `api_search` / `api_detail` 查阅 Factorio Lua API
-3. 用 `bash` 的 `cat` 读取现有脚本作为参考
-4. 用 `bash` 的 `cat > file <<'EOF'` 写新脚本到 `teams/factorio/scripts/actions/<name>.lua`
-5. 用 `bash` 执行 `git add` 和 `git commit`
+2. 用 `bash` 的 `cat` 读取现有脚本作为参考
+3. 用 `bash` 的 `cat > file <<'EOF'` 写新脚本到 `teams/factorio/scripts/actions/<name>.lua`
+4. 用 `bash` 执行 `git add` 和 `git commit`
 
 ## 路径限制
 
@@ -913,6 +872,8 @@ end
 
 注意：现有 actions.place 等脚本使用 `require`，不能作为动态脚本模板。新脚本必须自包含。
 ```
+
+注意：dynamic section 内容会追加到 task 消息（不是 system prompt），作为独立段落。
 
 **Verification:**
 ```bash
