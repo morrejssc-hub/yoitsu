@@ -249,7 +249,26 @@ class ContextLateLookupData(BaseModel):
     query_kind: str  # 字符串摘要
 ```
 
-**Step 2: 单元测试**
+**Step 2: 添加 BaseEvent wrapper**
+
+```python
+# observation.py
+from yoitsu_contracts.events import BaseEvent
+
+class ObservationToolRepetitionEvent(BaseEvent):
+    """Event wrapper for tool repetition observation."""
+    event_type: str = OBSERVATION_TOOL_REPETITION
+    data: ToolRepetitionData
+
+class ObservationContextLateLookupEvent(BaseEvent):
+    """Event wrapper for context late lookup observation."""
+    event_type: str = OBSERVATION_CONTEXT_LATE_LOOKUP
+    data: ContextLateLookupData
+```
+
+注意：`ToolRepetitionData` / `ContextLateLookupData` 只是 payload 模型，不能直接传给 `EventGateway.emit()`；必须先包成带 `event_type` 的 `BaseEvent` 子类。
+
+**Step 3: 单元测试**
 
 ```python
 # tests/test_observation_events.py
@@ -369,20 +388,25 @@ def run_interaction_loop(...):
     
     # Loop 结束，扫描 pattern
     from palimpsest.runtime.tool_pattern import detect_repetition
-    from yoitsu_contracts.observation import ToolRepetitionData
+    from yoitsu_contracts.observation import (
+        ObservationToolRepetitionEvent,
+        ToolRepetitionData,
+    )
     
     repetitions = detect_repetition(tool_call_history)
     for r in repetitions:
-        # 构造 ToolRepetitionData 事件并通过 gateway.emit() 发送
-        event = ToolRepetitionData(
-            job_id=job_id,
-            task_id=task_id,
-            role=role_name,
-            team=team,
-            tool_name=r.tool_name,
-            call_count=r.call_count,
-            arg_pattern=r.arg_pattern,
-            similarity=r.similarity,
+        # payload 必须先包成 BaseEvent wrapper，再通过 gateway.emit() 发送
+        event = ObservationToolRepetitionEvent(
+            data=ToolRepetitionData(
+                job_id=job_id,
+                task_id=task_id,
+                role=role_name,
+                team=team,
+                tool_name=r.tool_name,
+                call_count=r.call_count,
+                arg_pattern=r.arg_pattern,
+                similarity=r.similarity,
+            )
         )
         gateway.emit(event)
 ```
