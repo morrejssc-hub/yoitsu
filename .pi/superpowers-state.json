@@ -29,31 +29,11 @@
   "tdd": {
     "phase": "green",
     "testFiles": [
-      "trenni/tests/test_observation_aggregator.py",
-      "yoitsu-contracts/tests/test_observation_events.py",
-      "palimpsest/tests/test_tool_pattern.py",
-      "palimpsest/tests/test_context_loader.py",
-      "palimpsest/tests/test_optimizer_role_discovery.py",
-      "palimpsest/tests/test_roles.py",
-      "trenni/tests/test_supervisor_observation_dedup.py"
+      "trenni/tests/test_observation_aggregator.py"
     ],
     "sourceFiles": [
-      "trenni/trenni/config.py",
       "trenni/trenni/observation_aggregator.py",
-      "trenni/trenni/supervisor.py",
-      "yoitsu-contracts/src/yoitsu_contracts/observation.py",
-      "palimpsest/palimpsest/runtime/tool_pattern.py",
-      "palimpsest/palimpsest/runtime/context.py",
-      "palimpsest/palimpsest/runner.py",
-      "palimpsest/palimpsest/stages/interaction.py",
-      "palimpsest/palimpsest/runtime/contexts.py",
-      "palimpsest/palimpsest/stages/context.py",
-      "/home/holo/factorio-agent/teams/factorio/tools/factorio_call_script.py",
-      "/home/holo/factorio-agent/teams/factorio/contexts/factorio_scripts.py",
-      "/home/holo/factorio-agent/teams/factorio/roles/worker.py",
-      "/home/holo/factorio-agent/teams/factorio/roles/implementer.py",
-      "/home/holo/yoitsu/evo/roles/optimizer.py",
-      "yoitsu-contracts/src/yoitsu_contracts/__init__.py"
+      "trenni/trenni/supervisor.py"
     ],
     "redVerificationPending": false
   },
