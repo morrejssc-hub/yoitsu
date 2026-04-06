@@ -10,6 +10,13 @@
 - 新增 2 个 observation 信号（tool_repetition / context_late_lookup），保持独立模型
 - 新增 trenni 定时聚合器，查 pasloe observation 事件，达阈值 spawn optimizer
 
+**MVP Runtime Notes (validated by smoke test):**
+- `evo_root` 不只是 prompt/role/tool/context 的 discovery root，也是 Python import root；runtime 执行 evo 模块前必须保证 `teams.<team>.*` 可导入
+- 当前单 bundle MVP 通过 `palimpsest.runner` 在 job 启动时把 materialized `evo_path` 注入 `sys.path`
+- Factorio scripts 当前以 `evo/teams/factorio/scripts/` 作为 agent 侧可见目录；这是为 MVP 落地接受的 workaround，Phase 2 再消除双源/镜像问题
+- `trenni` 运行 job 容器时需要把 host 上的 `evo_root_host` 挂载到容器内 `/opt/yoitsu/palimpsest/evo`，并在 SELinux 环境下使用 `:Z`
+- Task 9 smoke 已验证到 `submit -> worker -> factorio_call_script(name='ping') -> RCON -> {"tick":0,"mod":"factorio-agent","status":"ok"}`
+
 **Tech Stack:** Python, Pydantic, factorio-rcon, yoitsu-contracts, palimpsest, trenni, Lua
 
 **Non-goals:**
@@ -1078,6 +1085,7 @@ EOF
 2. **observation 聚合器的阈值调优**：`tool_repetition: 5.0` 是拍脑袋的值，可能需要根据实际任务调整。
 3. **implementer 写出的 Lua 语法错**：LLM 可能写出不能跑的脚本。MVP 不做静态检查，第二次 smoke 失败时进入第二轮迭代。
 4. **factorio 服务器的网络可达性**：palimpsest job 容器需要能访问 host 上的 RCON 端口（27015）。如果容器网络隔离，需要配置 `--network=host` 或端口映射。
-5. **evo_root 在容器内的 mount**：trenni 启动 palimpsest job 容器时需要把 host 上的 factorio-agent clone 挂进容器。这需要在 trenni 的 podman backend 配置 volume mount（当前 plan 未涉及，需要手工或加 config）。
-6. **现有脚本的 require 依赖**：actions.place 等现有脚本使用 `require("scripts.lib.agent")`，不能通过 RCON register 动态加载。MVP 阶段只有新产出的脚本（符合动态脚本约束）才能热加载；现有脚本继续走 mod 预加载路径。
-7. **implementer 工具集限制**：只有 bash 可用，需要用 `cat`/`cat >` 读写文件。如果需要 read_file/write_file，必须在 factorio-agent/tools/ 下提供这两个工具的实现。
+5. **evo_root import/mount 契约已成为运行前提**：job 容器内必须同时满足两件事：`evo_root_host -> /opt/yoitsu/palimpsest/evo` 的 volume mount，以及 runtime 启动时把 materialized `evo_path` 注入 `sys.path`。否则 team-specific 模块的 `from teams.factorio...` 导入会失败。
+6. **Factorio scripts 双源问题**：当前 MVP 为了让 agent 侧 context/implementer 看到 scripts，把脚本放在 `evo/teams/factorio/scripts/`；而 mod 运行时仍可能依赖另一份脚本目录。这是已接受的 workaround，后续需要统一脚本源。
+7. **现有脚本的 require 依赖**：actions.place 等现有脚本使用 `require("scripts.lib.agent")`，不能通过 RCON register 动态加载。MVP 阶段只有新产出的脚本（符合动态脚本约束）才能热加载；现有脚本继续走 mod 预加载路径。
+8. **implementer 工具集限制**：只有 bash 可用，需要用 `cat`/`cat >` 读写文件。如果需要 read_file/write_file，必须在 factorio-agent/tools/ 下提供这两个工具的实现。

@@ -30,7 +30,7 @@ optimizer_publication.__publication_strategy__ = "skip"
 @role(
     name="optimizer",
     description="Analyzes observation events and proposes improvements",
-    role_type="planner",
+    role_type="optimizer",  # Not 'planner' to avoid conflict with actual planner
     min_cost=0.1,
     recommended_cost=0.5,
     max_cost=1.0,
