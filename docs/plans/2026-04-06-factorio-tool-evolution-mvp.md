@@ -74,26 +74,38 @@ async def aggregate_observations(
     window_hours: int,
     thresholds: dict[str, float],
 ) -> list[AggregationResult]:
-    """Query pasloe for observation.* events in window, aggregate by metric_type."""
+    """Query pasloe for observation.* events in window, aggregate by metric_type.
+    
+    Pasloe API: GET /events?since=<cutoff>&limit=1000&order=asc
+    - No event_type_prefix filter, must fetch all and filter locally
+    - Returns {"id", "source_id", "type", "ts", "data"}
+    - Max limit=1000, need pagination via X-Next-Cursor
+    """
     cutoff = datetime.utcnow() - timedelta(hours=window_hours)
+    all_events = []
+    cursor = None
     
-    # Query pasloe: GET /events?event_type_prefix=observation.&since=<cutoff>
     async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            f"{pasloe_url}/events",
-            params={
-                "event_type_prefix": "observation.",
-                "since": cutoff.isoformat(),
-                "limit": 10000,
-            },
-        )
-        resp.raise_for_status()
-        events = resp.json()
+        while True:
+            params = {"since": cutoff.isoformat(), "limit": 1000, "order": "asc"}
+            if cursor:
+                params["cursor"] = cursor
+            
+            resp = await client.get(f"{pasloe_url}/events", params=params)
+            resp.raise_for_status()
+            batch = resp.json()
+            
+            # Filter observation.* events locally
+            all_events.extend([e for e in batch if e.get("type", "").startswith("observation.")])
+            
+            cursor = resp.headers.get("X-Next-Cursor")
+            if not cursor or len(batch) < 1000:
+                break
     
-    # Group by metric_type (从 event_type 提取，如 observation.tool_repetition → tool_repetition)
+    # Group by metric_type (从 type 提取，如 observation.tool_repetition → tool_repetition)
     counts: dict[str, int] = {}
-    for evt in events:
-        event_type = evt.get("event_type", "")
+    for evt in all_events:
+        event_type = evt.get("type", "")
         if not event_type.startswith("observation."):
             continue
         metric = event_type.split(".", 1)[1] if "." in event_type else ""
@@ -134,6 +146,8 @@ class Supervisor:
     
     async def _aggregate_and_spawn_optimizer(self):
         from trenni.observation_aggregator import aggregate_observations
+        from yoitsu_contracts.events import TriggerData
+        
         results = await aggregate_observations(
             self.config.pasloe_url,
             self.config.observation_window_hours,
@@ -142,25 +156,29 @@ class Supervisor:
         for r in results:
             if r.exceeded:
                 logger.info(f"Observation threshold exceeded: {r.metric_type} ({r.count} >= {r.threshold})")
-                # 直接 spawn optimizer task（不走 pasloe ObservationThresholdEvent）
-                trigger_data = {
-                    "trigger_type": "observation_threshold",
-                    "goal": f"Analyze {r.metric_type} pattern ({r.count} occurrences in {self.config.observation_window_hours}h)",
-                    "role": "optimizer",
-                    "team": "default",
-                    "budget": 0.5,
-                    "params": {
+                # 构造 TriggerData 并调用 _process_trigger
+                trigger_data = TriggerData(
+                    trigger_type="observation_threshold",
+                    goal=f"Analyze {r.metric_type} pattern ({r.count} occurrences in {self.config.observation_window_hours}h)",
+                    role="optimizer",
+                    team="default",
+                    budget=0.5,
+                    params={
                         "metric_type": r.metric_type,
                         "observation_count": r.count,
                         "window_hours": self.config.observation_window_hours,
                     },
-                }
-                await self._process_trigger(SimpleNamespace(
+                )
+                # 创建 synthetic event
+                from types import SimpleNamespace
+                synthetic_event = SimpleNamespace(
                     id=f"obs-agg-{r.metric_type}-{int(time.time())}",
                     source_id="observation_aggregator",
-                    event_type="trigger",
-                    data=trigger_data,
-                ))
+                    type="trigger",
+                    ts=datetime.utcnow().isoformat(),
+                    data={},
+                )
+                await self._process_trigger(synthetic_event, trigger_data, replay=False)
 ```
 
 **Step 4: 单元测试**
@@ -661,7 +679,11 @@ import os
 
 
 def factorio_worker_preparation(*, runtime_context, evo_root, **params):
-    """Connect RCON and batch-load all evo scripts into mod dynamic_scripts."""
+    """Connect RCON. Do NOT batch-load existing scripts (they use require, incompatible with dynamic loader).
+    
+    Only new scripts written by implementer (which follow dynamic script constraints) will be registered.
+    Existing actions.place etc. are pre-loaded by mod at startup via require().
+    """
     from pathlib import Path
     
     # Connect RCON
@@ -674,15 +696,10 @@ def factorio_worker_preparation(*, runtime_context, evo_root, **params):
     runtime_context.resources["rcon"] = rcon
     runtime_context.register_cleanup(rcon.close)
     
-    # Batch-load scripts: 遍历 evo/teams/factorio/scripts/*.lua，通过 RCON register
-    scripts_dir = Path(evo_root) / "teams" / "factorio" / "scripts"
-    if scripts_dir.exists():
-        for lua_path in scripts_dir.rglob("*.lua"):
-            rel = lua_path.relative_to(scripts_dir).with_suffix("")
-            name = str(rel).replace("/", ".")
-            code = lua_path.read_text(encoding="utf-8")
-            # 注意：code 里如果有 >>> 会破坏协议，MVP 假设不含
-            rcon.send_command(f"/agent register {name} <<<{code}>>>")
+    # 可选：只 register 新增的动态脚本（如 actions/place_grid.lua）
+    # 判断方式：脚本首行有 "-- DYNAMIC" 标记，或放在 teams/factorio/scripts/dynamic/ 子目录
+    # MVP 阶段先不做自动 register，让 implementer 产出的脚本在第二次 job 时手工 register
+    # 或者在 context_fn 里通过 RCON list_scripts 获取当前可用脚本列表
     
     # Worker 不需要 git workspace
     return WorkspaceConfig(repo="", new_branch=False)
@@ -723,7 +740,9 @@ def worker(**params):
 
 ## 可用脚本
 
-{factorio_scripts}
+下面是当前可用的脚本列表（由 context provider 动态注入）：
+
+<!-- factorio_scripts section will be appended here by build_context -->
 
 ## 工作流程
 
@@ -737,6 +756,8 @@ def worker(**params):
 - 如果发现需要反复调用同一个脚本，照样完成任务。事后会有 optimizer 评估是否值得抽象。
 - 如果脚本返回 `[TRUNCATED 4KB]`，说明输出过大，考虑分页或写文件。
 ```
+
+注意：`{factorio_scripts}` 占位符不会被 build_context 替换。dynamic section 内容会追加到 system prompt 之后，作为独立段落。
 
 **Verification:**
 ```bash
@@ -800,6 +821,7 @@ def api_detail(name: str) -> ToolResult:
 ```python
 # teams/factorio/roles/implementer.py
 """Implementer role: writes Lua scripts in factorio-agent repo."""
+import os
 from palimpsest.runtime.roles import role, JobSpec, context_spec, workspace_config, git_publication
 
 
@@ -842,7 +864,7 @@ def implementer(**params):
             sections=[{"type": "factorio_scripts"}],
         ),
         publication_fn=implementer_publication,
-        tools=["bash", "read_file", "write_file", "api_search", "api_detail"],
+        tools=["bash"],  # 只用 bash，read_file/write_file 需要在 evo/tools/ 提供
     )
 ```
 
@@ -855,34 +877,41 @@ def implementer(**params):
 
 ## 当前脚本目录
 
-{factorio_scripts}
+下面是当前可用的脚本列表（由 context provider 动态注入）：
+
+<!-- factorio_scripts section will be appended here by build_context -->
 
 ## 工作流程
 
 1. 理解目标（goal）—— 通常是"在 teams/factorio/scripts/actions/ 下新增一个封装脚本"
 2. 用 `api_search` / `api_detail` 查阅 Factorio Lua API
-3. 用 `read_file` 读取现有脚本作为参考
-4. 用 `write_file` 写新脚本到 `teams/factorio/scripts/actions/<name>.lua`
+3. 用 `bash` 的 `cat` 读取现有脚本作为参考
+4. 用 `bash` 的 `cat > file <<'EOF'` 写新脚本到 `teams/factorio/scripts/actions/<name>.lua`
 5. 用 `bash` 执行 `git add` 和 `git commit`
 
 ## 路径限制
 
 **只允许写 `teams/factorio/scripts/` 下的文件**。写其他路径会被 publication 阶段拒绝。
 
-## Lua 脚本格式
+## Lua 脚本格式（动态脚本约束）
+
+新脚本必须符合动态脚本约束（不能使用 `require`）：
 
 ```lua
 -- 首行注释：简短描述
+-- DYNAMIC (标记为动态脚本)
 return function(args_str)
     -- args_str 是 JSON 字符串，用 game.json_to_table() 解析
     local args = game.json_to_table(args_str)
     
-    -- 你的逻辑
+    -- 你的逻辑（不能 require 其他模块）
     
     -- 返回结果（serialize 已自动注入）
     return serialize({ok = true, result = ...})
 end
 ```
+
+注意：现有 actions.place 等脚本使用 `require`，不能作为动态脚本模板。新脚本必须自包含。
 ```
 
 **Verification:**
@@ -1023,9 +1052,9 @@ yoitsu submit /tmp/factorio-grid-task.yaml
 **Step 6: 记录证据**
 
 ```bash
-# 查询两次 job 的 tool call 历史
-pasloe-cli query --job-id <job1> --event-type tool.exec
-pasloe-cli query --job-id <job2> --event-type tool.exec
+# 查询两次 job 的 tool call 历史（通过 pasloe HTTP API 或 trenni logs）
+curl "http://localhost:8000/events?type=tool.exec&limit=1000" | jq '.[] | select(.data.job_id == "<job1>")'
+curl "http://localhost:8000/events?type=tool.exec&limit=1000" | jq '.[] | select(.data.job_id == "<job2>")'
 
 # 保存到文档
 cat > docs/plans/2026-04-06-factorio-tool-evolution-mvp-results.md <<EOF
@@ -1065,3 +1094,5 @@ EOF
 3. **implementer 写出的 Lua 语法错**：LLM 可能写出不能跑的脚本。MVP 不做静态检查，第二次 smoke 失败时进入第二轮迭代。
 4. **factorio 服务器的网络可达性**：palimpsest job 容器需要能访问 host 上的 RCON 端口（27015）。如果容器网络隔离，需要配置 `--network=host` 或端口映射。
 5. **evo_root 在容器内的 mount**：trenni 启动 palimpsest job 容器时需要把 host 上的 factorio-agent clone 挂进容器。这需要在 trenni 的 podman backend 配置 volume mount（当前 plan 未涉及，需要手工或加 config）。
+6. **现有脚本的 require 依赖**：actions.place 等现有脚本使用 `require("scripts.lib.agent")`，不能通过 RCON register 动态加载。MVP 阶段只有新产出的脚本（符合动态脚本约束）才能热加载；现有脚本继续走 mod 预加载路径。
+7. **implementer 工具集限制**：只有 bash 可用，需要用 `cat`/`cat >` 读写文件。如果需要 read_file/write_file，必须在 factorio-agent/tools/ 下提供这两个工具的实现。
