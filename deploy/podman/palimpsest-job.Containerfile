@@ -8,6 +8,7 @@ WORKDIR /opt/yoitsu
 
 COPY yoitsu-contracts /opt/yoitsu/yoitsu-contracts
 COPY palimpsest /opt/yoitsu/palimpsest
+COPY evo /opt/yoitsu/palimpsest/evo
 
 RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip install --upgrade pip setuptools wheel \
