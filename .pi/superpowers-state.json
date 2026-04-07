@@ -27,20 +27,22 @@
     }
   },
   "tdd": {
-    "phase": "idle",
-    "testFiles": [],
+    "phase": "green",
+    "testFiles": [
+      "/home/holo/yoitsu/palimpsest/tests/test_e2e_external_events.py"
+    ],
     "sourceFiles": [
-      "/home/holo/yoitsu/palimpsest/palimpsest/stages/context.py"
+      "/home/holo/yoitsu/evo/factorio/contexts/github_context.py"
     ],
     "redVerificationPending": false
   },
   "debug": {
     "active": false,
-    "investigated": true,
+    "investigated": false,
     "fixAttempts": 0
   },
   "verification": {
-    "verified": false,
+    "verified": true,
     "verificationWaived": false
   }
 }
