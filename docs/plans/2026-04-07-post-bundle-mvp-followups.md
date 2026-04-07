@@ -1,6 +1,6 @@
 # Post-Bundle-MVP Followups
 
-**Status:** In Progress
+**Status:** Completed
 **Date:** 2026-04-07
 **Depends on:** `docs/superpowers/specs/2026-04-06-bundle-mvp-design.md`
 
@@ -69,7 +69,16 @@ The implementation plan for Bundle MVP has been archived to:
    Decide how to publish the accumulated local work across `yoitsu`,
    `palimpsest`, and `yoitsu-contracts`.
 
-   *Status: Pending user decision*
+   *Status: Pending user decision - multiple repos have uncommitted changes*
+
+## Test Results
+
+```
+trenni:     206 passed, 1 skipped
+palimpsest: 177 passed, 1 warning
+contracts:  120 passed
+Total:      503 tests passing
+```
 
 ## Not Needed For Bundle MVP Completion
 
