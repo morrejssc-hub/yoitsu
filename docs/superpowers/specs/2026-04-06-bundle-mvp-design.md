@@ -5,6 +5,31 @@
 **Supersedes:** `docs/plans/2026-04-06-evo-team-isolation.md` (Phase 1.5),
 `docs/plans/2026-04-06-multi-bundle-evo-phase2.md` (old multi-repo Phase 2 vision)
 
+## Voice
+
+**This document describes the target state.** Every layout diagram, API
+example, loader signature, and success criterion below is **what will
+exist after implementation**, not current reality. The "Background" section
+is the only part describing the current codebase; everything from
+"Architecture" onward is prescriptive.
+
+Concretely, at the time of writing:
+- `evo/teams/factorio/roles/` contains only `worker.py` and `implementer.py`.
+  The optimizer/planner/evaluator roles appearing in diagrams below are
+  examples of what a bundle **may** contain, not roles that currently exist.
+- `RoleManager`, `ToolLoader`, `ContextLoader`, and `RuntimeContext` all use
+  `team` parameters today and implement two-layer (team-specific shadows
+  global) resolution per ADR-0011.
+- `TeamDefinition` with `worker_roles` / `planner_role` / `eval_role` fields
+  is actively enforced by `TeamManager.resolve()`.
+- Implementer's current allowlist is `teams/factorio/scripts/` and
+  `mod/scripts/`, not `evolved/scripts/`.
+
+All of that is what this spec **changes**. This is a breaking, all-at-once
+architectural shift with no backwards compatibility, no deprecation window,
+and no data migration. `team` is **deleted** from trenni's control-plane
+semantics, not renamed.
+
 ## Background
 
 The current evo/trenni split leaks task-domain knowledge into trenni infrastructure.
@@ -36,9 +61,19 @@ strategy) into a **bundle**: a self-contained subtree under `evo/<bundle>/`
 that owns its own roles and is consumed by trenni through a minimal behavioral
 contract.
 
-Trenni becomes a generic harness: given `(bundle, role, payload)`, load the
-named role from the named bundle and run it. No categorization, no topology
-validation, no automatic routing.
+**`team` is deleted from trenni's control-plane semantics.** It is not
+renamed to `bundle`. `bundle` is only an addressing unit for the evo
+directory — it does not carry `TeamDefinition`, topology, `worker_roles`,
+`planner_role`, `eval_role`, or any other runtime semantic that `team`
+carries today. Trenni stops knowing what a team *is*; it only knows how
+to locate a role file inside a bundle directory and run it.
+
+Trenni's only business entry point becomes `(bundle, role, goal, params)`:
+locate `evo/<bundle>/roles/<role>.py`, load it, run it with the provided
+goal and params. No categorization, no topology validation, no automatic
+routing. The runtime still generically loads `tools/` and `contexts/` from
+the bundle when a role's JobSpec references them — that is generic
+artifact loading, not business-topology interpretation.
 
 ## Non-Goals
 
@@ -62,9 +97,10 @@ validation, no automatic routing.
 
 ## Architecture
 
-### Bundle = self-contained subtree
+### Bundle = self-contained subtree (Target Post-Migration Layout)
 
-A bundle is a directory under `evo/<bundle>/` with this layout:
+A bundle is a directory under `evo/<bundle>/`. The target layout for the
+factorio bundle, **after migration**, is:
 
 ```
 evo/
@@ -72,17 +108,21 @@ evo/
     ├── __init__.py
     ├── roles/                     (role catalog — files named by role)
     │   ├── worker.py              (RCON execution, skip publication)
-    │   ├── implementer.py         (writes Lua, git publication + allowlist)
-    │   ├── optimizer.py
-    │   ├── planner.py
-    │   └── evaluator.py
+    │   └── implementer.py         (writes Lua, git publication + allowlist)
     ├── tools/                     (factorio_call_script.py, ...)
     ├── contexts/                  (factorio_scripts.py, ...)
-    ├── prompts/                   (optimizer.md, ...)
+    ├── prompts/                   (worker.md, implementer.md, ...)
     ├── lib/                       (rcon.py, bridge.py — human-reviewed infra)
     └── evolved/                   (agent write surface)
         └── scripts/               (Lua scripts produced by implementer)
 ```
+
+Only `worker.py` and `implementer.py` appear in the post-migration state
+because those are the only roles currently implemented. If the factorio
+bundle later grows an optimizer, planner, or evaluator, those are
+per-bundle choices and are not required by this spec. Other bundles are
+free to have a different set of roles entirely; trenni imposes no minimum
+or maximum.
 
 Key properties:
 
@@ -92,7 +132,16 @@ Key properties:
 - **No `teams/` wrapper.** Bundle name is the first-level directory under `evo/`.
   Python import path is `factorio.lib.rcon`, not `teams.factorio.lib.rcon`.
 - **`evolved/` is the only agent-writable subtree.** Implementer's path allowlist
-  is tightened to `evo/<bundle>/evolved/**`.
+  is tightened to `evo/<bundle>/evolved/**`. Under MVP, agents **only** write
+  to `evo/<bundle>/evolved/**`. Any subsequent flow that moves an approved
+  evolved artifact into a mod-executable location (e.g. syncing
+  `evolved/scripts/foo.lua` into the factorio mod's real script directory,
+  registering it with the mod loader, running review gates) is a
+  **per-bundle internal process** and is **not** part of trenni's contract.
+  Trenni never writes into `lib/`, `tools/`, `contexts/`, `roles/`, or any
+  mod directory, and neither do agents — those are human-reviewed surfaces.
+  This explicitly overrides the current `teams/factorio/scripts/` +
+  `mod/scripts/` allowlist in `evo/teams/factorio/roles/implementer.py`.
 - **Role catalog is discovered by filename.** `evo/<bundle>/roles/*.py` is the
   entire catalog. The filename (minus `.py`) is the canonical role name. No
   manifest, no registration.
@@ -114,26 +163,60 @@ publication policy to diverge even when the underlying prompt is similar.
 This is an intentional instance of the principle "similar prompt + different
 publication = different role."
 
+**Why not a single role with a `mode` parameter?** Because the differences
+between worker and implementer are **safety boundaries**, not prompt
+variants: different publication guardrails, different workspace
+requirements (ephemeral scratch vs. real git remote), different writable
+surfaces, different human-review requirements. Folding these into a mode
+flag on one role would move safety-critical policy into runtime parameters
+where a bug or misconfiguration could let an executor write where only a
+reviewed implementer should. Keeping them as distinct files means the
+allowlist, publication strategy, and tool set are statically attached to
+the role identity and cannot be swapped at call time.
+
 The earlier instinct to delete one as "duplication" was based on a
 misreading. Both stay. The only deletion in this area is the *global*
 `evo/roles/worker.py`, which is genuinely legacy.
 
 ### Trenni contract
 
-Trenni reads exactly one thing from a bundle: **the set of role files under
-`evo/<bundle>/roles/`**. Everything else (tools, contexts, prompts, lib) is
-indirect — consumed by role code at runtime, not inspected by trenni.
+Trenni's only **business entry point** into a bundle is the role file at
+`evo/<bundle>/roles/<role>.py`. That is the single unit of task-domain
+knowledge trenni looks up by name.
 
-Task submission API:
+This does **not** mean trenni ignores the rest of the bundle at runtime.
+When the loaded role produces a JobSpec that references tools or contexts,
+the runtime generically loads them from `evo/<bundle>/tools/` and
+`evo/<bundle>/contexts/` (and prompts from `evo/<bundle>/prompts/`, lib
+imports from `evo/<bundle>/lib/`). That generic artifact loading is not
+business-topology interpretation — trenni neither categorizes tools, nor
+validates that a context exists for a given role, nor enforces any shape
+on what a bundle chooses to put in those directories. It just resolves
+names that role code asked for.
+
+**Task submission API** (replaces the current `{team, goal, ...}` shape):
+
 ```
-{bundle: <name>, role: <name>, payload: ...}
+{bundle: <name>, role: <name>, goal: <string>, params: <object>}
 ```
-Both `bundle` and `role` are required. Missing either is a 400. Trenni does
-not infer a default, does not run a planner, does not categorize.
+
+- `bundle` and `role` are both required. Missing either is a hard 400
+  at the API boundary. Trenni does not infer a default, does not run a
+  planner, does not categorize.
+- `goal` is the human-readable task description handed to the role
+  prompt, equivalent to today's `goal` field.
+- `params` is a bundle-defined object that the role interprets itself.
+  It is a transport envelope; trenni does not inspect it.
+
+Field mapping vs. today's spawn API: current fields like
+`repo`, `init_branch`, scheduling hints etc. remain part of the underlying
+JobSpec, but they are produced **by the role code** from `(goal, params)`,
+not taken from the submission envelope. This keeps the submission contract
+minimal and moves all task-shape decisions into the bundle.
 
 Subtask spawning: role code that wants to decompose or chain work submits
-new tasks with explicit `(bundle, role)` through the same API. Trenni treats
-them identically to externally submitted tasks.
+new tasks with explicit `(bundle, role, goal, params)` through the same
+API. Trenni treats them identically to externally submitted tasks.
 
 ## Changes
 
@@ -174,7 +257,7 @@ them identically to externally submitted tasks.
 - `factorio-tool-evolution-mvp.md` main line (Task 9 smoke verified) — bundle
   MVP is its infrastructure upgrade, not a replacement.
 
-## Factorio bundle migration
+## Factorio Bundle: Target Post-Migration State
 
 After the structural changes, `evo/factorio/roles/` contains:
 
@@ -182,11 +265,14 @@ After the structural changes, `evo/factorio/roles/` contains:
   which is already the RCON executor)
 - `implementer.py` — Lua script author (from current
   `teams/factorio/roles/implementer.py`)
-- `optimizer.py`, `planner.py`, `evaluator.py` — as today
+
+These are the only two roles currently implemented. If the factorio bundle
+later adds optimizer, planner, or evaluator roles, those are per-bundle
+choices and are not required by this spec.
 
 Tonight's iron-chest task becomes:
 ```
-{bundle: factorio, role: worker, payload: "place iron-chest at (0,0), (2,0), (4,0)"}
+{bundle: factorio, role: worker, goal: "place iron-chest at (0,0), (2,0), (4,0)", params: {}}
 ```
 Zero decomposition, zero implementer misrouting, zero publication failure.
 
