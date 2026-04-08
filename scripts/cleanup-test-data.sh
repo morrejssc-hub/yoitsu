@@ -8,7 +8,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(dirname "$SCRIPT_DIR")"
 
-SKIP_BACKUP="${1:-}" == "--skip-backup"
+SKIP_BACKUP="${1:-}"
 FORCE="${FORCE:-0}"
 
 if [[ "$SKIP_BACKUP" != "--skip-backup" && "$FORCE" != "1" ]]; then
