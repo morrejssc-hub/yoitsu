@@ -9,13 +9,8 @@ from __future__ import annotations
 
 from palimpsest.runtime.roles import JobSpec, context_spec, role
 
-# Import from relative path within bundle
-# Note: When this role is loaded, evo/factorio is already on sys.path
-try:
-    from lib.preparation import prepare_evo_workspace_override
-except ImportError:
-    # Fallback for testing when not in bundle context
-    from factorio.lib.preparation import prepare_evo_workspace_override
+# Import from bundle lib - works when evo_root is on sys.path (runner.py ensures this)
+from factorio.lib.preparation import prepare_evo_workspace_override
 
 
 def implementer_publication(**kwargs) -> tuple[None, list]:
