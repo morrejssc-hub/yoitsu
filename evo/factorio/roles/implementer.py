@@ -29,6 +29,8 @@ def implementer_publication(**kwargs) -> tuple[None, list]:
     Returns:
         (None, []) - no git ref, no artifact bindings
     """
+    # TODO: verify files were actually created
+    # LLM may claim success without actually calling bash
     return None, []
 
 
