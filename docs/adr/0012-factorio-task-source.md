@@ -1,27 +1,365 @@
-# 0012: Factorio（复杂有状态任务源组) 隔离方案
+# ADR-0012: Factorio as a Stateful Task Source
 
-## 1. 现状与存在的问题
-ADR-0011 确定了 `Team` 是系统内第一等级的隔离机制，但过去缺少针对强状态保持类系统验证该隔离强度的真实例子。
-纯依靠短期缓存工作区（Workspace）和拉取 Git 代码进行静态操作的数据模式无法反映真实企业运维的长期进程场景。如果遇到“带独立长期运行数据库”、“多角色互相篡改世界”的场景（例如无头游戏 Factorio 客户端自动化交互），目前的任务资源映射与并发执行规则很容易产生脏读、资源竞态及底层网络穿透安全疑虑。
+- Status: Proposed
+- Date: 2026-04-01
+- Related: ADR-0003, ADR-0007
 
-## 2. 做出的决策与原因
-**决策**：专门为具有长期独立状态机的任务定义 `factorio` Team 边界隔离范例：
-1. **环境与网络阻断**：Factorio Team 使用独有镜像与虚拟网桥 (`extra_networks: factorio-net`)，完全和 Yoitsu 其他管理调度层分离；它的进化依赖目录限定在 `evo/teams/factorio/` 下以防干扰全局角色环境。
-2. **连接作为被管资源**：在执行前准备期建立 RCON 桥接客户端，并将其作为 `RuntimeContext` 内管理的特殊资源。游戏世界的交互仅允许经过限定范围内的单一 Tool (`call_script`) 中继。
-3. **强加全局序列化执行锁**：在 Trenni 调度器配置中对于此类 Team 设置最高并发度 (`max_concurrent_jobs`) 为严格的 1。
-4. **混合的双节点发布机制**：在执行结案发布时，同步记录被篡改过的 Git 文件代码外加即时 Factorio 的世界快照存档 (Checkpoint)。
-**原因**：对于非 Git 原生形态的巨型有状态任务，不惜代价牺牲并发也要保证状态不被其他 Agent 或者多线程并发出发读写撕裂，这才是真正的工业级重状态任务管理要求。这也是论证 Artifact 双层隔离的完美测试场。
+## Context
 
-## 3. 期望达到的结果
-- 产出一个被证明可行的多状态长期连接应用框架验证方案模板，用作以后类似非 Git 特化任务开发的蓝本参考。
-- 测试出调度器跨容器调度、跨网桥调用的极限鲁棒性与异常超时捕获水平。
+ADR-0003 (D7-D11) established team as a first-class isolation boundary
+with per-team runtime profiles, two-layer evo structure, and team-scoped
+evolution. This ADR defines the first concrete team beyond `default`:
+**Factorio**.
 
-## 4. 容易混淆的概念
-- **基准资产挂载 (Baseline Mod Mounts) vs 即时代码同步 (Per-job Synchronization)**
-  - 系统本身提供的只是原生 Factorio 服务启动的底层基础模型（基准文件依赖）。Agent 执行期间的那些脚本变更不可直接对游戏原始存放卷进行覆盖操作，所有的 Agent 临时代码实验变更应当是由唯一的专属通道 `call_script` 实况接管推入并被引擎执行的，避免临时执行脏了长运基线环境。
-- **评判者 (Evaluator) 的不可篡改性**
-  - 虽然 Evaluator 同在序列化运行队列中享有独占执行权，但它只能读操作观察世界进行结案。世界状态变量变更必须由桥接通道代码明确阻止由 Evaluator 角色的发出者操作。
+Factorio is a long-running headless game process reachable over RCON. It
+is useful as a task source because it provides:
 
-## 5. 对之前 ADR 或文档的修正说明
+- A persistent world with clear state transitions
+- A rich action surface that is mechanically verifiable
+- A natural fit for planner / worker / evaluator decomposition
 
-**2026-04-07 按 ADR-0014 修正**：本文中所有 "Factorio Team" 应读作 "Factorio bundle"，`evo/teams/factorio/` 应读作 `evo/factorio/`，"Team 最高并发度 = 1" 由 `trenni` 配置中 `bundles.factorio.scheduling.max_concurrent_jobs = 1` 经 `BundleLaunchCondition` 实现。角色/工具/上下文的隔离不再依赖全局回落层，因为全局层已被删除（参见 ADR-0014）。Factorio bundle 的 `extra_networks` 与独占 `call_script` 工具约束仍然有效。
+It is not a git-native workload. The live world, the script repository,
+and the publication boundary must be defined explicitly.
+
+## Decisions
+
+### D1. Factorio is a Yoitsu team
+
+Factorio is integrated as a team named `factorio` in Trenni's
+configuration. Per ADR-0003 D7, this means it gets its own runtime
+profile, its own evo scope, and its own launch conditions.
+
+Trenni config:
+
+```yaml
+teams:
+  factorio:
+    runtime:
+      image: "localhost/yoitsu-factorio-job:dev"
+      pod_name: null
+      extra_networks: ["factorio-net"]
+      env_allowlist:
+        - "RCON_HOST"
+        - "RCON_PORT"
+        - "RCON_PASSWORD"
+        - "ANTHROPIC_API_KEY"
+    scheduling:
+      max_concurrent_jobs: 1
+```
+
+### D2. Factorio roles and tools live in `evo/teams/factorio/`
+
+Per ADR-0003 D8, factorio-specific artifacts are physically isolated:
+
+```
+evo/teams/factorio/
+  roles/
+    planner.py          # factorio planner
+    worker.py           # factorio worker
+    evaluator.py        # factorio evaluator
+  tools/
+    factorio_tools.py   # call_script tool
+  prompts/
+    planner.md
+    worker.md
+    evaluator.md
+```
+
+These roles are visible only to the `factorio` team. They shadow any
+global roles of the same name. Global tools (like `bash`, `spawn`) remain
+available to the factorio team via the layered resolution in ADR-0003 D8.
+
+Role definitions use `@role(...)` without `teams=` — team membership is
+determined by directory location:
+
+```python
+# evo/teams/factorio/roles/worker.py
+@role(
+    name="worker",
+    description="Executes Factorio automation tasks via Lua scripts",
+    role_type="worker",
+    min_cost=0.10,
+    recommended_cost=0.50,
+    max_cost=2.0,
+)
+def factorio_worker(**params) -> JobSpec:
+    return JobSpec(
+        preparation_fn=factorio_preparation(),
+        context_fn=factorio_worker_context(),
+        publication_fn=factorio_publication(),
+        tools=["bash", "spawn", "call_script"],
+    )
+```
+
+### D3. Workspace is the `factorio-agent` repository
+
+The worker workspace is a git checkout of the `factorio-agent` repository.
+
+That workspace is the source of truth for:
+
+- Lua scripts under `mod/scripts/`
+- runtime API documentation
+- any code changes that should persist beyond a single job
+
+The agent reads and writes scripts through normal file tools in the
+workspace. Publication of persistent changes still uses git.
+
+### D4. Live-world execution uses `call_script`
+
+Factorio exposes a single source-specific tool: `call_script`.
+
+`call_script` is a statically registered tool in
+`evo/teams/factorio/tools/factorio_tools.py`. It accesses the RCON bridge
+through `runtime_context` injection per ADR-0003 D9:
+
+```python
+@tool
+def call_script(name: str, args: dict, runtime_context: RuntimeContext) -> ToolResult:
+    bridge = runtime_context.resources.get("rcon_bridge")
+    if not bridge:
+        return ToolResult(success=False, output="RCON bridge not available")
+    result = bridge.execute(name, args)
+    return result
+```
+
+`call_script` bridges the workspace and the live world:
+
+1. Resolves `name` against the job workspace's `mod/scripts/`
+2. If the script is missing from the live server or the workspace version
+   is newer, synchronizes that script into the live runtime
+3. Executes the script with the provided arguments over RCON
+
+Why a single tool rather than per-action tools:
+
+- The evolvable surface is the Lua script set, not Python wrappers
+- Script composition should stay in repo code
+- `call_script` is the correct abstraction boundary for Factorio-specific
+  behavior
+
+### D5. RCON bridge is a RuntimeContext resource
+
+The factorio worker's `preparation_fn` creates the RCON bridge and
+registers it as a resource:
+
+```python
+def factorio_preparation():
+    def prepare(*, runtime_context: RuntimeContext, **params):
+        host = os.environ.get("RCON_HOST", "factorio-server")
+        port = int(os.environ.get("RCON_PORT", "27015"))
+        password = os.environ.get("RCON_PASSWORD", "")
+
+        bridge = RconBridge(host, port, password)
+        runtime_context.resources["rcon_bridge"] = bridge
+        runtime_context.register_cleanup(bridge.close)
+
+        return WorkspaceConfig(
+            repo=params.get("repo", ""),
+            init_branch=params.get("init_branch", "main"),
+        )
+    return prepare
+```
+
+The bridge tracks world mutation state internally:
+
+- `bridge.world_mutated: bool` — updated after each `call_script`
+  execution based on script type and result
+- Publication and scheduler decisions depend on this flag
+
+### D6. Server deployment is independent from the Yoitsu pod
+
+The Factorio server runs as a Quadlet-managed Podman container with its
+own network and persistent save volume:
+
+```text
+                ┌─── Pod: yoitsu-dev ───┐
+                │ postgres  pasloe      │
+                │ trenni                 │
+                └───────────────────────┘
+
+yoitsu-factorio-job ──RCON──▶ factorio-server
+                              (factorio-net)
+```
+
+- `factorio-server` runs on `factorio-net`
+- Factorio job containers join `factorio-net` via the team's
+  `extra_networks` config (ADR-0003 D11)
+- Factorio jobs do not join the `yoitsu-dev` pod (`pod_name: null`)
+- Saves persist in `factorio-saves` volume
+
+The server may mount a stable host checkout of the mod for baseline
+assets, but that mount is **not** the synchronization path for per-job
+workspace edits. Per-job script visibility comes from `call_script`
+synchronization.
+
+### D7. Publication is git + world checkpoint
+
+Factorio publication has two outputs:
+
+1. **Git publication** for any workspace changes (scripts, docs)
+2. **Game save checkpoint** for live-world changes
+
+The publication function uses `runtime_context` to access the bridge:
+
+```python
+def factorio_publication():
+    def publish(*, runtime_context: RuntimeContext, result: dict, **params):
+        # Git publication (standard)
+        git_ref = git_publication()(result=result, **params)
+
+        # World checkpoint (factorio-specific)
+        bridge = runtime_context.resources.get("rcon_bridge")
+        if bridge and bridge.world_mutated:
+            save_result = bridge.save_world()
+            if not save_result.success:
+                raise PublicationError("World save failed after mutation")
+
+        return git_ref
+    return publish
+```
+
+Save policy:
+
+- Planner and evaluator jobs do not mutate the world and skip the save
+- Worker jobs that mutated the world must save successfully; failure to
+  save prevents reporting the job as clean success
+- Whether the world was mutated is tracked by the bridge, not assumed
+  from the role type
+
+### D8. Concurrency is a team launch condition
+
+Per ADR-0003 D10, `max_concurrent_jobs: 1` in the factorio team config
+translates to a launch condition on every factorio job:
+
+```
+running_count(team="factorio") < 1
+```
+
+This means:
+
+- At most one factorio job runs at a time (across all roles)
+- Additional factorio jobs wait in the queue until the running job
+  completes
+- Default team jobs are unaffected by factorio concurrency
+- The scheduler does not know about "factorio" — it only evaluates the
+  condition
+
+Initial policy: the concurrency limit applies to **all factorio jobs**,
+including planner and evaluator. This serializes the entire factorio
+pipeline.
+
+Rationale: the world is shared mutable state. Even "read-only" operations
+during a worker mutation could observe inconsistent intermediate state.
+Serializing all factorio jobs is the simplest correct approach.
+
+Role-specific safety (e.g. restricting which scripts a planner may call)
+is enforced within `call_script` — the tool can validate script permissions
+based on role type or script classification. Scheduling does not
+differentiate roles.
+
+## Implementation Components
+
+### evo/teams/factorio/
+
+| Path | Content |
+|---|---|
+| `roles/planner.py` | Planner role: context-only, no world mutation |
+| `roles/worker.py` | Worker role: preparation creates RCON bridge, tools include call_script |
+| `roles/evaluator.py` | Evaluator role: inspects world state, no mutation |
+| `tools/factorio_tools.py` | `call_script` tool with `runtime_context` injection |
+| `prompts/planner.md` | Factorio planner system prompt |
+| `prompts/worker.md` | Factorio worker system prompt |
+| `prompts/evaluator.md` | Factorio evaluator system prompt |
+
+### factorio-agent repository
+
+| Path | Content |
+|---|---|
+| `factorio_bridge/` | RCON bridge client and on-demand script synchronization |
+
+### deploy/
+
+| Path | Content |
+|---|---|
+| `quadlet/factorio-server.container` | Factorio server Quadlet service |
+| `quadlet/factorio-saves.volume` | Persistent save volume |
+| `quadlet/factorio-net.network` | Dedicated network |
+| `podman/factorio-job.Containerfile` | Team-specific job image (includes RCON client, Lua tooling) |
+
+## Verification
+
+1. Quadlet starts `factorio-server` and factorio job containers can reach
+   it on `factorio-net`.
+2. `call_script("ping", ...)` succeeds from a factorio job container.
+3. A script edited in the job workspace can be executed in the same job
+   through on-demand synchronization.
+4. `RoleManager.resolve("worker")` for team `factorio` returns the
+   factorio worker `JobSpec`, not the global worker.
+5. Two factorio jobs cannot run concurrently — the second waits in queue.
+6. A worker job that mutates world state but fails to save is surfaced as
+   publication failure, not clean success.
+7. Factorio evolution (modified tools/prompts) lands in
+   `evo/teams/factorio/`, not in global `evo/`.
+
+## Dependencies on ADR-0003 (Team Isolation)
+
+ADR-0012 requires the following from ADR-0003:
+
+| ADR-0003 Decision | Required for |
+|---|---|
+| D8: Two-layer evo | Factorio roles/tools/prompts live in `evo/teams/factorio/` |
+| D10: Team config in Trenni | Factorio runtime profile and `max_concurrent_jobs` |
+| D10: Per-team launch conditions | Concurrency enforcement |
+| D9: RuntimeContext | RCON bridge lifecycle + tool injection |
+| D8: Team-derived paths | Role/tool resolution finds factorio artifacts |
+| D11: Container runtime per team | Factorio image, no pod, factorio-net |
+
+Implementation sequence:
+
+```
+ADR-0003 Phase 1: RuntimeContext lifecycle + runtime_context injection
+    ↓
+ADR-0003 Phase 2: Two-layer evo resolution + team config in Trenni
+    ↓
+ADR-0003 Phase 3: Per-team runtime spec + launch conditions
+    ↓
+ADR-0012: Factorio roles + call_script + RCON bridge + Quadlet deployment
+```
+
+## Issues and Suggestions
+
+### 1. Track world mutation explicitly
+
+The bridge should record whether a job executed mutating operations.
+Publication and save decisions should depend on `bridge.world_mutated`
+rather than role name alone. The classification of which scripts are
+mutating may be convention-based (e.g. scripts under `mod/scripts/actions/`
+are mutating, scripts under `mod/scripts/queries/` are not) or
+result-based (the script returns a mutation flag).
+
+### 2. Keep baseline mod assets and job synchronization separate
+
+Do not depend on a shared host mount to make job-edited scripts visible
+to the live server. The architecture requires per-job synchronization
+via `call_script`. The server's host mount provides baseline assets
+only.
+
+### 3. RCON connection failure is preparation failure
+
+If the RCON bridge cannot be established during `preparation_fn`, the job
+fails at preparation. Per ADR-0003 D4, preparation failure is job
+failure — Trenni does not retry. Retry logic for transient RCON
+connectivity issues (server restart, network flap) is the
+preparation function's responsibility, implemented with standard retry
+patterns inside the preparation function.
+
+### 4. Factorio job image contents
+
+The `factorio-job.Containerfile` must include:
+
+- RCON client library (Python)
+- Lua interpreter (for local script validation before sync)
+- All Palimpsest runtime dependencies
+- `factorio-agent` repository access (git clone at preparation time)
+
+The image does not include the Factorio game server itself — that runs
+as a separate Quadlet service.

@@ -20,9 +20,13 @@ The current architecture is documented in [docs/architecture.md](docs/architectu
 
 ## Architecture Summary
 
+- **Event Store is the sole causal authority.** It answers "who declared what, when" — not "where is that thing now". Content availability is delegated to URI-scheme-specific backends (git, filesystem, HTTP).
 - `Job` and `Task` are separate. A job only succeeds or fails. A task is implicitly active until Trenni emits a terminal event: `task.completed`, `task.failed`, or `task.cancelled`.
 - `spawn()` is the only orchestration primitive. Trenni expands it into child jobs plus a conditional join job.
-- Trenni is split into `state`, `scheduler`, `spawn_handler`, `replay`, `checkpoint`, and `isolation` modules.
+- **Each bundle is an independent git repository** with roles, tools, contexts, capabilities, and observations.
+- **Runtime runs a 4-stage pipeline**: preparation (capability setup) → context (LLM context assembly) → agent loop (LLM + tools) → finalization (capability finalize + event emission).
+- **Capabilities** manage runtime services (setup/finalize lifecycle). They return event data; runtime emits on their behalf.
+- **Observation analyzers** run post-hoc in Trenni after job completion, using a unified interface for both default and bundle-provided analyzers.
 - Isolation is a protocol. `PodmanBackend` is the current implementation.
 - Shared wire contracts live in `yoitsu-contracts`, not as duplicated ad hoc dict parsing in each repo.
 

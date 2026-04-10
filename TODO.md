@@ -6,6 +6,37 @@
 - 当前任务工件：`.task/`
 - 历史归档：[docs/archive/](docs/archive/)
 
+## 2026-04-10 文档层架构重构
+
+### 完成的工作
+
+1. ✅ **architecture.md 全面重写**
+   - 吸收 glossary.md 内容
+   - 确立 Event Store 为唯一因果权威
+   - 定义 Artifact 三属性模型（身份 + 因果 + 可用性）
+   - 定义 Runtime 四阶段流水线（preparation → context → agent loop → finalization）
+   - 整合 Bundle 模型、URI 合同、编排边界
+
+2. ✅ **新增 ADR-0016: Capability 模型**
+   - Capability = setup + finalize 生命周期
+   - Role 声明 `needs` 列表
+   - Capability 返回事件数据，runtime 代发
+   - Capability 之间无排序依赖
+   - Finalize 合并 publication 和 cleanup
+
+3. ✅ **新增 ADR-0017: Observation 统一分析接口**
+   - Trenni 后置分析（非实时）
+   - 默认与 bundle 提供的 analyzer 无区分
+   - 按 bundle + task_id 分组
+   - Analyzer 可随 bundle 演化
+
+4. ✅ **现有 ADR 语义合并**
+   - ADR-0010: 信号触发从实时改为后置分析，evo/ 改为 bundle repo
+   - ADR-0012: Factorio 隔离方案用 capability 模型重写
+   - ADR-0015: Bundle 目录结构新增 capabilities/ 和 observations/
+
+5. ✅ **glossary.md 合并回 architecture.md**
+
 ## 2026-04-08 完成的工作
 
 ### Phase 1: Autonomous Review Loop ✅ 完成
@@ -29,66 +60,3 @@
 - trenni: `faf3762` - fix(optimization-loop): fix two bugs
 - palimpsest: `66bb004` - fix(interaction): increase summary truncation limit
 - yoitsu: `c9a55be` - feat(optimizer): add default bundle optimizer role
-
-### observation_aggregator.py API key header 错误
-
-**问题**：`trenni/trenni/observation_aggregator.py` 使用了错误的 pasloe API 认证 header
-- 错误代码：`headers["Authorization"] = f"Bearer {api_key}"` 
-- 正确代码：`headers["X-API-Key"] = api_key`
-
-**影响**：导致 observation 聚合查询返回 401 Unauthorized，优化回环无法触发
-
-**状态**：✅ 已修复并验证
-
-**修复内容**：
-1. `observation_aggregator.py`: 使用 `X-API-Key` header（而非 `Authorization: Bearer`）
-2. `supervisor.py`: 为 optimizer 任务设置 `bundle="default"`（符合 Bundle MVP 要求）
-
-**验证结果**：
-- ✅ 聚合查询成功（不再 401 错误）
-- ✅ 阈值判断正确（13 >= 0.3）
-- ✅ Optimizer 任务成功创建并启动
-- ✅ Optimizer 生成了 ReviewProposal JSON
-- ❌ ReviewProposal 解析失败（JSON 被截断）
-
-### 新发现的问题：Optimizer summary 被截断
-
-**问题**：`agent.job.completed` 事件中的 `summary` 字段被截断，导致 JSON 不完整
-
-**现象**：
-```
-WARNING Optimizer job babdeaace68b88ac-root summary could not be parsed as ReviewProposal
-```
-
-**根因**：`palimpsest/stages/interaction.py` 和 `publication.py` 硬编码 `summary[:500]` 截断
-
-**修复**：将截断限制从 500 增加到 4096 字符
-
-**验证结果**：
-- ✅ Optimizer 输出完整 JSON (746 字符)
-- ✅ ReviewProposal 解析成功
-- ✅ Implementer 任务成功创建
-
-**提交**：
-- palimpsest: `66bb004` - fix(interaction): increase summary truncation limit
-- yoitsu: `c9a55be` - feat(optimizer): add default bundle optimizer role
-
-## Phase 1: Autonomous Review Loop ✅ 完成
-
-完整事件链验证成功：
-1. ✅ Observation 事件发出
-2. ✅ 聚合查询成功 (X-API-Key header)
-3. ✅ 阈值判断正确
-4. ✅ Optimizer 任务启动
-5. ✅ Optimizer 输出完整 ReviewProposal
-6. ✅ ReviewProposal 解析成功
-7. ✅ Implementer 任务创建
-
-**日志证据**：
-```
-INFO Spawning optimization task from optimizer job babdeaacea1d1873-root: goal=Develop and deploy adaptive budget estimation syst
-```
-
-**相关测试**：
-- `trenni/tests/test_observation_aggregator.py::test_api_key_header_is_x_api_key`
-- `trenni/tests/test_optimizer_output.py::TestEndToEndOptimizationLoop`

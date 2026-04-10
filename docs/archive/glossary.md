@@ -1,10 +1,18 @@
+> **⚠️ Merged into [architecture.md](architecture.md)**  
+> This glossary was a temporary standalone reference. As of 2026-04-10, all terminology definitions have been merged into the §9 术语速查 section of `architecture.md`. Use `architecture.md` as the single reference for both architecture and terminology. Do not use this file for new implementation.
+
+---
+
+*Original content preserved below for historical reference.*
+
+---
+
 # Yoitsu 术语表
 
-**Status:** Active · **Anchor ADR:** [ADR-0015](adr/0015-bundle-as-repo.md)
+**Status:** Superseded · Merged into architecture.md · **Date:** 2026-04-10
+**Original Anchor ADR:** [ADR-0015](adr/0015-bundle-as-repo.md)
 
-本术语表是 ADR-0015 之后所有文档、代码注释、LLM prompt 的**唯一**词汇锚点。当核心文档（`architecture.md` / `palimpsest/docs/design.md`）与本表冲突时，本表是正确的；请同步修正另一端。
-
-每个条目包含两部分：**是什么**（正面定义）与**不是什么**（常见误解）。只有当正反两面都对齐，一个词才算稳定。
+本术语表的内容已合并入 [architecture.md](architecture.md) §9。以下是归档时的原始内容。
 
 ---
 
