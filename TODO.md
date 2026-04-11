@@ -6,6 +6,48 @@
 - 当前任务工件：`.task/`
 - 历史归档：[docs/archive/](docs/archive/)
 
+## 2026-04-11 Capability Model 实现完成
+
+### 完成的工作（代码层实现）
+
+1. ✅ **P0: Runner capability lifecycle (ADR-0016)**
+   - runner.py: capability setup → interaction → finalize → FinalizeResult
+   - needs=[]: backward compat, old preparation/publication path
+   - needs=['git_workspace']: capability setup/finalize called
+   - success=False → JobFailedData, success=True → JobCompletedData
+   - Hallucination gate: capability finalize controls job terminal state
+
+2. ✅ **P1: evo_sha → bundle_sha rename (ADR-0015)**
+   - SpawnedJob.evo_sha → SpawnedJob.bundle_sha
+   - SpawnDefinition.evo_sha → SpawnDefinition.bundle_sha
+   - runtime_builder.py: io.yoitsu.evo-sha → io.yoitsu.bundle-sha
+   - spawn_handler.py: all evo_sha vars → bundle_sha
+   - supervisor.py: _cached_evo_sha → _cached_bundle_sha, _read_evo_sha → _read_bundle_sha
+   - config.py: TrenniConfig.evo_root → bundle_root
+   - 220 tests passed ✓
+
+3. ✅ **P3: JobContext.analyzer_version (ADR-0017)**
+   - JobContext新增analyzer_version字段
+   - runner传入config.analyzer_version到cap_ctx
+   - capabilities可通过ctx.analyzer_version发射observation
+
+4. ✅ **P4: Capability integration tests**
+   - test_capability.py: 7 tests for capability lifecycle
+   - setup/finalize calls, success handling, backward compat
+   - 180 tests passed ✓
+
+### 待完成
+
+5. ⏳ **P2: Role/Tool/Context从bundle_workspace加载**
+   - RoleManager/UnifiedToolGateway仍从evo_root加载
+   - 需要更新为从bundle_workspace加载role/tool/context模块
+
+### 测试状态
+
+- palimpsest: 180 passed ✓
+- trenni: 220 passed ✓
+- yoitsu-contracts: 120 passed ✓
+
 ## 2026-04-10 文档层架构重构（第四轮清理）
 
 ### 完成的工作（文档一致性清理）
