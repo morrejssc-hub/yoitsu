@@ -6,6 +6,38 @@
 - 当前任务工件：`.task/`
 - 历史归档：[docs/archive/](docs/archive/)
 
+## 2026-04-11 路径问题修复
+
+### 完成的工作（严重问题修复）
+
+1. ✅ **runtime_builder: 容器内路径注入**
+   - BundleSource/TargetSource注入容器内路径 `/opt/yoitsu/palimpsest/bundle|target`
+   - 不再注入 host path，避免容器内找不到宿主机路径
+
+2. ✅ **RoleManager/loader: bundle_workspace根目录查找**
+   - RoleManager直接从 `bundle_workspace/roles/` 查找
+   - contexts.py: 从 `bundle_workspace/contexts/` 查找
+   - tools.py: 从 `bundle_workspace/tools/` 查找
+   - UnifiedToolGateway: `bundle_workspace` 取代 `evo_root+bundle` 参数
+
+3. ✅ **TargetSource: selector字段**
+   - workspace_manager使用 `selector=init_branch` 而非 `branch=init_branch`
+   - 符合 TargetSource 模型定义
+
+4. ✅ **architecture.md: backward compat说明**
+   - §4.1 Preparation: needs=[] 回退到 preparation_fn
+   - §4.4 Finalization: needs=[] 回退到 publication_fn
+
+### 测试状态
+
+- palimpsest: 135 passed, 41 failed (observation_context tests)
+- trenni: 220 passed ✓
+- yoitsu-contracts: 120 passed ✓
+
+### 待完成
+
+- palimpsest observation_context 测试修复
+
 ## 2026-04-11 Capability Model 实现完成
 
 ### 完成的工作（代码层实现）
