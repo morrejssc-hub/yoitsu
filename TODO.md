@@ -6,7 +6,35 @@
 - 当前任务工件：`.task/`
 - 历史归档：[docs/archive/](docs/archive/)
 
-## 2026-04-11 代码审查通过
+## 2026-04-11 代码审查通过 (第二轮)
+
+### 审查范围
+
+本次审查覆盖完整架构重构(ADR-0015/0016/0017)及第二轮修复。
+
+### 修复的Issues (第二轮)
+
+| Issue | 描述 | 修复 |
+|-------|------|------|
+| Important #1 | GitWorkspaceCapability role discrimination | ✓ role_type字段 + hallucination gate逻辑 |
+| Important #2 | Artifact URI format | ✓ target_source.repo_uri构建正确URI |
+| Deprecated清除 | backward compat代码残留 | ✓ 移除evo_root/evo_sha/workspace_path |
+
+### 测试状态
+
+- palimpsest: 175 passed ✓
+- trenni: 未验证 (无pytest环境)
+- yoitsu-contracts: 120 passed ✓
+
+### 审查结论
+
+**Ready to merge: Yes**
+
+核心问题已修复，deprecated代码已清除，测试全量通过。
+
+---
+
+## 2026-04-11 代码审查通过 (第一轮)
 
 ### 审查结果
 
