@@ -6,6 +6,33 @@
 - 当前任务工件：`.task/`
 - 历史归档：[docs/archive/](docs/archive/)
 
+## 2026-04-11 代码审查通过
+
+### 审查结果
+
+| ADR | 状态 | 备注 |
+|-----|------|------|
+| ADR-0015 | ✅ 正确实现 | bundle_workspace 结构正确，容器路径已处理 |
+| ADR-0016 | ✅ 正确实现 | capability lifecycle 完整，backward compat 维护 |
+| ADR-0017 | ✅ 正确实现 | observation emission 已移除，analyzer_version 已传递 |
+
+**生产风险**: 低
+- backward compat 层确保现有部署继续工作
+- 新 capability path 仅在 `needs` 声明时激活
+- 所有测试通过，主链路接口已对齐
+
+### 建议后续优化（Minor）
+
+1. Fixture 结构整合 - 使用单一 canonical 结构
+2. spawn() backward compat 完善 - 添加 deprecation warning
+3. workspace_path deprecated 字段 - 添加 deprecation warning
+
+### 测试状态
+
+- palimpsest: 175 passed ✓
+- trenni: 220 passed ✓
+- yoitsu-contracts: 120 passed ✓
+
 ## 2026-04-11 主链路修复完成
 
 ### 完成的工作
