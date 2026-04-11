@@ -252,6 +252,8 @@ Palimpsest 为每个 job 执行以下流水线：
 
 Capability 不直接发送事件。`setup()` 返回事件数据（如果有），runtime 代发。
 
+**Backward Compatibility**: 如果 `needs=[]`，则回退到旧的 `preparation_fn` 路径。这是为了支持逐步迁移到 capability 模型。新的 role 应使用 capability model，旧的 role 可继续使用 preparation_fn。
+
 ### 4.2 Context
 
 调用 `context_fn` 组装 LLM 需要的上下文信息。
@@ -279,6 +281,8 @@ LLM 循环 + tool dispatch。这是 agent 的核心执行阶段。
 每个 capability 的 `finalize()` 内部完成实际工作，返回事件数据（artifact refs、cleanup 确认等），runtime 统一 emit。
 
 **Capability 之间的 finalize 互不依赖。** 如果两个动作有执行顺序要求，它们应该在同一个 capability 内处理。
+
+**Backward Compatibility**: 如果 `needs=[]`，则回退到旧的 `publication_fn` 路径。这是为了支持逐步迁移到 capability 模型。新的 role 应使用 capability model，旧的 role 可继续使用 publication_fn。
 
 ---
 
