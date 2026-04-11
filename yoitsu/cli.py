@@ -45,6 +45,11 @@ def _error_detail(exc: Exception) -> str:
     return str(exc)
 
 
+def _shorten(value: object, limit: int) -> str:
+    text = str(value or "")
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
 @dataclass
 class _TaskChainRow:
     task_id: str
@@ -414,6 +419,169 @@ def _podman_summary() -> dict:
         return {"available": True, "running": running, "exited": exited, "total": len(rows)}
     except Exception as exc:
         return {"available": False, "error": str(exc)}
+
+
+def _watch_event_counts() -> dict[str, int]:
+    return {
+        "seen": 0,
+        "agent": 0,
+        "supervisor": 0,
+        "observation": 0,
+        "other": 0,
+    }
+
+
+def _watch_job_counts() -> dict[str, int]:
+    return {
+        "started": 0,
+        "completed": 0,
+        "failed": 0,
+    }
+
+
+def _watch_task_counts() -> dict[str, int]:
+    return {
+        "created": 0,
+        "terminal": 0,
+        "completed": 0,
+        "failed": 0,
+        "partial": 0,
+        "cancelled": 0,
+        "eval_failed": 0,
+        "evaluating": 0,
+    }
+
+
+def _watch_live_snapshot() -> dict[str, int]:
+    return {
+        "running": 0,
+        "pending": 0,
+        "ready": 0,
+        "tasks_in_memory": 0,
+    }
+
+
+def _record_watch_event(
+    event: dict,
+    *,
+    event_counts: dict[str, int],
+    event_type_counts: dict[str, int],
+    job_counts: dict[str, int],
+    task_counts: dict[str, int],
+    errors: list[str],
+) -> list[str]:
+    et = str(event.get("type") or "")
+    data = event.get("data") or {}
+    lines: list[str] = []
+
+    event_counts["seen"] += 1
+    prefix = et.split(".", 1)[0] if "." in et else et
+    if prefix in {"agent", "supervisor", "observation"}:
+        event_counts[prefix] += 1
+    else:
+        event_counts["other"] += 1
+    event_type_counts[et] = event_type_counts.get(et, 0) + 1
+
+    if et == "supervisor.task.created":
+        task_counts["created"] += 1
+        goal = str(data.get("goal") or "")[:80]
+        lines.append(f"  [task] created {_shorten(goal, 80)}")
+        return lines
+
+    task_state = _task_state_from_event_type(et)
+    if et.startswith("supervisor.task.") and task_state:
+        if task_state == "evaluating":
+            task_counts["evaluating"] += 1
+            lines.append(f"  [task] evaluating {_shorten(str(data.get('task_id') or ''), 16)}")
+            return lines
+        task_counts["terminal"] += 1
+        if task_state in task_counts:
+            task_counts[task_state] += 1
+        lines.append(
+            f"  [task] {task_state} {_shorten(str(data.get('task_id') or ''), 16)}"
+        )
+        return lines
+
+    if et == "agent.job.started":
+        job_counts["started"] += 1
+        lines.append(
+            "  [job] started "
+            f"{_shorten(str(data.get('job_id') or ''), 16)} "
+            f"role={_shorten(str(data.get('role') or ''), 12)}"
+        )
+        return lines
+
+    if et == "agent.job.completed":
+        job_counts["completed"] += 1
+        summary = _shorten(str(data.get("summary") or ""), 60)
+        lines.append(
+            "  [job] completed "
+            f"{_shorten(str(data.get('job_id') or ''), 16)} "
+            f"{summary}"
+        )
+        return lines
+
+    if et == "agent.job.failed":
+        job_counts["failed"] += 1
+        err = _shorten(str(data.get("error") or ""), 80)
+        if err:
+            errors.append(err)
+        lines.append(
+            "  [job] failed "
+            f"{_shorten(str(data.get('job_id') or ''), 16)} "
+            f"{err}"
+        )
+        return lines
+
+    return lines
+
+
+def _watch_summary_payload(
+    *,
+    duration_seconds: float,
+    event_counts: dict[str, int],
+    event_type_counts: dict[str, int],
+    job_counts: dict[str, int],
+    task_counts: dict[str, int],
+    live_snapshot: dict[str, int],
+    errors: list[str],
+) -> dict[str, object]:
+    total_jobs = job_counts["completed"] + job_counts["failed"]
+    success_rate = f"{job_counts['completed'] / total_jobs * 100:.0f}%" if total_jobs else "n/a"
+    return {
+        "duration_minutes": round(duration_seconds / 60, 1),
+        "event": {
+            "committed": event_counts["seen"],
+            "by_prefix": {
+                "agent": event_counts["agent"],
+                "supervisor": event_counts["supervisor"],
+                "observation": event_counts["observation"],
+                "other": event_counts["other"],
+            },
+            "by_type": dict(sorted(event_type_counts.items())),
+        },
+        "job": {
+            "started": job_counts["started"],
+            "completed": job_counts["completed"],
+            "failed": job_counts["failed"],
+            "success_rate": success_rate,
+            "live": dict(live_snapshot),
+        },
+        "task": {
+            "created": task_counts["created"],
+            "terminal": task_counts["terminal"],
+            "completed": task_counts["completed"],
+            "failed": task_counts["failed"],
+            "partial": task_counts["partial"],
+            "cancelled": task_counts["cancelled"],
+            "eval_failed": task_counts["eval_failed"],
+            "evaluating": task_counts["evaluating"],
+            "live": {
+                "in_memory": live_snapshot["tasks_in_memory"],
+            },
+        },
+        "recent_errors": errors[-10:],
+    }
 
 
 async def _wait_ready(check_fn, *, timeout: float = 10.0, interval: float = 0.5) -> bool:
@@ -997,7 +1165,7 @@ def build() -> None:
 @click.option("--interval", default=30, show_default=True, type=int,
               help="Poll interval in seconds")
 def watch(hours: float, interval: int) -> None:
-    """Continuously monitor the stack, print summary on exit."""
+    """Continuously monitor the stack in event/job/task layers."""
     import signal
     from datetime import datetime, timedelta
 
@@ -1013,8 +1181,11 @@ def watch(hours: float, interval: int) -> None:
     start_time = datetime.now()
     end_time = start_time + timedelta(hours=hours) if hours > 0 else None
     event_cursor: str | None = None
-    job_counts: dict[str, int] = {"started": 0, "completed": 0, "failed": 0}
-    task_counts: dict[str, int] = {"created": 0, "terminal": 0}
+    event_counts = _watch_event_counts()
+    event_type_counts: dict[str, int] = {}
+    job_counts = _watch_job_counts()
+    task_counts = _watch_task_counts()
+    live_snapshot = _watch_live_snapshot()
     errors: list[str] = []
 
     async def _poll_once(pasloe: PasloeClient, trenni: TrenniClient) -> None:
@@ -1029,22 +1200,23 @@ def watch(hours: float, interval: int) -> None:
             if r.status_code == 200:
                 events = r.json()
                 next_cursor = r.headers.get("X-Next-Cursor")
+                last_event_type = ""
                 for ev in events:
-                    et = ev.get("type", "")
-                    data = ev.get("data", {})
-                    if et == "supervisor.task.created":
-                        task_counts["created"] += 1
-                        click.echo(f"  [task.created] {data.get('goal', '')[:80]}")
-                    elif et == "agent.job.started":
-                        job_counts["started"] += 1
-                    elif et == "agent.job.completed":
-                        job_counts["completed"] += 1
-                        click.echo(f"  [job.completed] {data.get('job_id', '')[:16]} {data.get('summary', '')[:60]}")
-                    elif et == "agent.job.failed":
-                        job_counts["failed"] += 1
-                        err = data.get("error", "")[:80]
-                        click.echo(f"  [job.failed] {data.get('job_id', '')[:16]} {err}")
-                        errors.append(err)
+                    last_event_type = str(ev.get("type") or "")
+                    for line in _record_watch_event(
+                        ev,
+                        event_counts=event_counts,
+                        event_type_counts=event_type_counts,
+                        job_counts=job_counts,
+                        task_counts=task_counts,
+                        errors=errors,
+                    ):
+                        click.echo(line)
+                if events:
+                    click.echo(
+                        f"  [event] new={len(events)} committed={event_counts['seen']} "
+                        f"last={last_event_type}"
+                    )
                 if next_cursor:
                     event_cursor = next_cursor
                 elif events:
@@ -1059,10 +1231,22 @@ def watch(hours: float, interval: int) -> None:
         try:
             st = await trenni.get_status()
             if st:
+                live_snapshot["running"] = int(st.get("running_jobs") or 0)
+                live_snapshot["pending"] = int(st.get("pending_jobs") or 0)
+                live_snapshot["ready"] = int(st.get("ready_queue_size") or 0)
+                live_snapshot["tasks_in_memory"] = len(st.get("tasks", {}) or {})
                 click.echo(
-                    f"  [trenni] jobs={st.get('running_jobs')}/{st.get('max_workers')} "
-                    f"pending={st.get('pending_jobs')} ready={st.get('ready_queue_size')} "
-                    f"tasks={len(st.get('tasks', {}))}"
+                    "  [job] live "
+                    f"running={live_snapshot['running']}/{st.get('max_workers')} "
+                    f"pending={live_snapshot['pending']} ready={live_snapshot['ready']} "
+                    f"started={job_counts['started']} ok={job_counts['completed']} fail={job_counts['failed']}"
+                )
+                click.echo(
+                    "  [task] live "
+                    f"in_memory={live_snapshot['tasks_in_memory']} "
+                    f"created={task_counts['created']} terminal={task_counts['terminal']} "
+                    f"done={task_counts['completed']} fail={task_counts['failed']} "
+                    f"partial={task_counts['partial']}"
                 )
         except Exception as exc:
             click.echo(f"  [warn] trenni: {exc}", err=True)
@@ -1083,8 +1267,9 @@ def watch(hours: float, interval: int) -> None:
                 remaining = (end_time - datetime.now()).total_seconds() if end_time else float("inf")
                 click.echo(
                     f"[watch] {elapsed / 60:.0f}min | "
-                    f"tasks={task_counts['created']} jobs: "
-                    f"started={job_counts['started']} ok={job_counts['completed']} fail={job_counts['failed']}"
+                    f"event={event_counts['seen']} "
+                    f"job={job_counts['started']}/{job_counts['completed']}/{job_counts['failed']} "
+                    f"task={task_counts['created']}/{task_counts['terminal']}"
                 )
                 await _poll_once(pasloe, trenni)
                 # interruptible sleep
@@ -1100,17 +1285,15 @@ def watch(hours: float, interval: int) -> None:
 
     # Print summary
     elapsed = (datetime.now() - start_time).total_seconds()
-    total_jobs = job_counts["completed"] + job_counts["failed"]
-    rate = f"{job_counts['completed'] / total_jobs * 100:.0f}%" if total_jobs else "n/a"
-    summary = {
-        "duration_minutes": round(elapsed / 60, 1),
-        "tasks_created": task_counts["created"],
-        "jobs_started": job_counts["started"],
-        "jobs_completed": job_counts["completed"],
-        "jobs_failed": job_counts["failed"],
-        "success_rate": rate,
-        "recent_errors": errors[-10:],
-    }
+    summary = _watch_summary_payload(
+        duration_seconds=elapsed,
+        event_counts=event_counts,
+        event_type_counts=event_type_counts,
+        job_counts=job_counts,
+        task_counts=task_counts,
+        live_snapshot=live_snapshot,
+        errors=errors,
+    )
     click.echo("\n=== Watch Summary ===")
     click.echo(json.dumps(summary, indent=2))
 

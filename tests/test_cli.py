@@ -12,7 +12,16 @@ import pytest
 from click.testing import CliRunner
 from yoitsu_contracts.client import PasloeEvent
 
-from yoitsu.cli import _display_task_id, _task_icon, main
+from yoitsu.cli import (
+    _display_task_id,
+    _record_watch_event,
+    _task_icon,
+    _watch_event_counts,
+    _watch_job_counts,
+    _watch_summary_payload,
+    _watch_task_counts,
+    main,
+)
 
 
 def _runner() -> CliRunner:
@@ -681,6 +690,76 @@ class TestDeploy:
 
 
 class TestWatch:
+    def test_record_watch_event_updates_job_and_task_layers(self):
+        event_counts = _watch_event_counts()
+        event_type_counts: dict[str, int] = {}
+        job_counts = _watch_job_counts()
+        task_counts = _watch_task_counts()
+        errors: list[str] = []
+
+        task_lines = _record_watch_event(
+            {"type": "supervisor.task.failed", "data": {"task_id": "t1"}},
+            event_counts=event_counts,
+            event_type_counts=event_type_counts,
+            job_counts=job_counts,
+            task_counts=task_counts,
+            errors=errors,
+        )
+        job_lines = _record_watch_event(
+            {"type": "agent.job.failed", "data": {"job_id": "j1", "error": "boom"}},
+            event_counts=event_counts,
+            event_type_counts=event_type_counts,
+            job_counts=job_counts,
+            task_counts=task_counts,
+            errors=errors,
+        )
+
+        assert task_counts["terminal"] == 1
+        assert task_counts["failed"] == 1
+        assert job_counts["failed"] == 1
+        assert event_counts["seen"] == 2
+        assert event_counts["supervisor"] == 1
+        assert event_counts["agent"] == 1
+        assert event_type_counts["supervisor.task.failed"] == 1
+        assert event_type_counts["agent.job.failed"] == 1
+        assert task_lines[0].startswith("  [task] failed")
+        assert job_lines[0].startswith("  [job] failed")
+        assert errors == ["boom"]
+
+    def test_watch_summary_payload_groups_counts_by_layer(self):
+        payload = _watch_summary_payload(
+            duration_seconds=120.0,
+            event_counts={
+                "seen": 5,
+                "agent": 2,
+                "supervisor": 3,
+                "observation": 0,
+                "other": 0,
+            },
+            event_type_counts={"agent.job.completed": 2, "supervisor.task.created": 3},
+            job_counts={"started": 3, "completed": 2, "failed": 1},
+            task_counts={
+                "created": 3,
+                "terminal": 2,
+                "completed": 1,
+                "failed": 1,
+                "partial": 0,
+                "cancelled": 0,
+                "eval_failed": 0,
+                "evaluating": 1,
+            },
+            live_snapshot={"running": 1, "pending": 2, "ready": 0, "tasks_in_memory": 4},
+            errors=["boom"],
+        )
+
+        assert payload["duration_minutes"] == 2.0
+        assert payload["event"]["committed"] == 5
+        assert payload["job"]["completed"] == 2
+        assert payload["job"]["live"]["running"] == 1
+        assert payload["task"]["terminal"] == 2
+        assert payload["task"]["live"]["in_memory"] == 4
+        assert payload["recent_errors"] == ["boom"]
+
     def test_watch_runs_and_prints_summary(self, monkeypatch):
         """Watch with tiny --hours should exit and print summary."""
         class FakeResponse:
@@ -711,6 +790,10 @@ class TestWatch:
             r = _runner().invoke(main, ["watch", "--hours", "0.0001", "--interval", "1"])
 
         assert "Watch Summary" in r.output
+        summary = json.loads(r.output.split("=== Watch Summary ===", 1)[1].strip())
+        assert "event" in summary
+        assert "job" in summary
+        assert "task" in summary
 
 
 class TestSetup:

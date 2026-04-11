@@ -2,13 +2,12 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from datetime import datetime
 from typing import Any
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal
 from textual.reactive import reactive
 from textual.widgets import DataTable, Footer, Header, Label, Static
 
@@ -40,6 +39,59 @@ def _shorten(s: str | None, n: int) -> str:
         return ""
     s = str(s)
     return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def _event_ts(raw: Any) -> str:
+    if isinstance(raw, datetime):
+        return raw.strftime("%H:%M:%S")
+    text = str(raw or "")
+    if not text:
+        return ""
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).strftime("%H:%M:%S")
+    except ValueError:
+        if "T" in text:
+            return text.split("T", 1)[1][:8]
+        return text[:8]
+
+
+def _event_refs(data: dict[str, Any]) -> str:
+    refs: list[str] = []
+    if data.get("job_id"):
+        refs.append(f"job:{_shorten(str(data['job_id']), 12)}")
+    if data.get("task_id"):
+        refs.append(f"task:{_shorten(str(data['task_id']), 12)}")
+    return " ".join(refs) or "-"
+
+
+def _event_detail(event: dict[str, Any]) -> str:
+    data = event.get("data") or {}
+    if data.get("summary"):
+        return _shorten(str(data["summary"]), 72)
+    if data.get("error"):
+        return _shorten(str(data["error"]), 72)
+    if data.get("goal"):
+        return _shorten(str(data["goal"]), 72)
+    parts: list[str] = []
+    if data.get("role"):
+        parts.append(f"role={data['role']}")
+    if data.get("bundle"):
+        parts.append(f"bundle={data['bundle']}")
+    if data.get("reason"):
+        parts.append(f"reason={data['reason']}")
+    if data.get("state"):
+        parts.append(f"state={data['state']}")
+    return _shorten(" ".join(parts), 72)
+
+
+def _state_cell(state: str, *, task: bool = False) -> str:
+    style = (
+        "green" if state == "completed"
+        else "red" if state in ("failed", "cancelled", "eval_failed")
+        else "yellow" if state in ("running", "pending", "ready", "evaluating")
+        else ""
+    )
+    return f"[{style}]{state}[/{style}]" if style else state
 
 
 # ── widgets ──────────────────────────────────────────────────────────────────
@@ -93,11 +145,15 @@ class MonitorApp(App[None]):
     #top-row {
         height: 10;
     }
-    #jobs-label, #tasks-label {
+    #events-label, #jobs-label, #tasks-label {
         background: $primary;
         color: $text;
         padding: 0 1;
         height: 1;
+    }
+    #events-table {
+        height: 1fr;
+        border: none;
     }
     #jobs-table {
         height: 1fr;
@@ -134,9 +190,11 @@ class MonitorApp(App[None]):
         with Horizontal(id="top-row"):
             yield StatusPanel(id="status-panel")
             yield LlmPanel(id="llm-panel")
-        yield Label(" Active Jobs", id="jobs-label")
+        yield Label(" Event Layer", id="events-label")
+        yield DataTable(id="events-table", cursor_type="row", zebra_stripes=True)
+        yield Label(" Job Layer", id="jobs-label")
         yield DataTable(id="jobs-table", cursor_type="row", zebra_stripes=True)
-        yield Label(" Active Tasks", id="tasks-label")
+        yield Label(" Task Layer", id="tasks-label")
         yield DataTable(id="tasks-table", cursor_type="row", zebra_stripes=True)
         yield Footer()
 
@@ -144,11 +202,14 @@ class MonitorApp(App[None]):
         self._pasloe = PasloeClient(url=self._pasloe_url, api_key=self._api_key)
         self._trenni = TrenniClient(url=self._trenni_url)
 
+        events_table: DataTable = self.query_one("#events-table", DataTable)
+        events_table.add_columns("ts", "type", "source", "refs", "detail")
+
         jobs_table: DataTable = self.query_one("#jobs-table", DataTable)
-        jobs_table.add_columns("job_id", "state", "team", "role", "summary")
+        jobs_table.add_columns("job_id", "state", "bundle", "role", "task_id")
 
         tasks_table: DataTable = self.query_one("#tasks-table", DataTable)
-        tasks_table.add_columns("task_id", "state", "team", "goal")
+        tasks_table.add_columns("task_id", "state", "bundle", "goal")
 
         self.set_interval(self._interval, self._do_refresh)
         self.run_worker(self._do_refresh(), exclusive=False, exit_on_error=False)
@@ -167,6 +228,7 @@ class MonitorApp(App[None]):
             await asyncio.gather(
                 self._refresh_status(),
                 self._refresh_llm(),
+                self._refresh_events(),
                 self._refresh_jobs(),
                 self._refresh_tasks(),
                 return_exceptions=True,
@@ -239,54 +301,59 @@ class MonitorApp(App[None]):
             lines.append("  [dim](no data yet)[/dim]")
         panel.content = "\n".join(lines)
 
+    # ── events table ──────────────────────────────────────────────────────────
+
+    async def _refresh_events(self) -> None:
+        assert self._pasloe is not None
+        events = await self._pasloe.list_events(limit=40)
+        table: DataTable = self.query_one("#events-table", DataTable)
+        table.clear()
+        if not events:
+            return
+        for event in events:
+            data = event.get("data") or {}
+            table.add_row(
+                _event_ts(event.get("ts")),
+                _shorten(event.get("type"), 30),
+                _shorten(event.get("source_id"), 18),
+                _event_refs(data),
+                _event_detail(event),
+            )
+
     # ── jobs table ────────────────────────────────────────────────────────────
 
     async def _refresh_jobs(self) -> None:
-        assert self._pasloe is not None
-        jobs = await self._pasloe.list_jobs(limit=50)
+        assert self._trenni is not None
+        jobs = await self._trenni.get_jobs()
         table: DataTable = self.query_one("#jobs-table", DataTable)
         table.clear()
         if not jobs:
             return
-        for j in jobs:
-            state = j.get("state", "")
-            style = (
-                "green" if state == "completed"
-                else "red" if state in ("failed", "eval_failed")
-                else "yellow" if state == "running"
-                else ""
-            )
-            state_cell = f"[{style}]{state}[/{style}]" if style else state
+        for j in jobs[:50]:
+            state = str(j.get("state") or "")
             table.add_row(
                 _shorten(j.get("job_id"), 16),
-                state_cell,
-                _shorten(j.get("team"), 16),
+                _state_cell(state),
+                _shorten(j.get("bundle"), 16),
                 _shorten(j.get("role"), 12),
-                _shorten(j.get("summary"), 48),
+                _shorten(j.get("task_id"), 16),
             )
 
     # ── tasks table ──────────────────────────────────────────────────────────
 
     async def _refresh_tasks(self) -> None:
-        assert self._pasloe is not None
-        tasks = await self._pasloe.list_tasks(limit=30)
+        assert self._trenni is not None
+        tasks = await self._trenni.get_tasks()
         table: DataTable = self.query_one("#tasks-table", DataTable)
         table.clear()
         if not tasks:
             return
-        for t in tasks:
-            state = t.get("state", "")
-            style = (
-                "green" if state == "completed"
-                else "red" if state in ("failed", "cancelled", "eval_failed")
-                else "yellow" if state == "running"
-                else ""
-            )
-            state_cell = f"[{style}]{state}[/{style}]" if style else state
+        for t in tasks[:50]:
+            state = str(t.get("state") or "")
             table.add_row(
                 _shorten(t.get("task_id"), 16),
-                state_cell,
-                _shorten(t.get("team"), 16),
+                _state_cell(state, task=True),
+                _shorten(t.get("bundle"), 16),
                 _shorten(t.get("goal"), 60),
             )
 
