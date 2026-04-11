@@ -6,6 +6,36 @@
 - 当前任务工件：`.task/`
 - 历史归档：[docs/archive/](docs/archive/)
 
+## 2026-04-11 主链路修复完成
+
+### 完成的工作
+
+1. ✅ **build_context(): resolve_context_functions调用**
+   - 调用改为 `resolve_context_functions(bundle_workspace, requested)`
+   - 不再传递 bundle 参数
+
+2. ✅ **context provider注入**
+   - build_context() 注入 bundle_workspace
+   - 支持 backward compat: evo_root → bundle_workspace
+
+3. ✅ **spawn() backward compat**
+   - 支持 bundle_workspace/bundle_sha 参数
+   - backward compat: 如果未提供 evo_root/evo_sha，使用 bundle_workspace/bundle_sha
+
+4. ✅ **测试迁移**
+   - test_observation_context.py: contexts/ 根目录
+   - test_context_loader.py: contexts/ 根目录
+   - test_e2e_external_events.py: 去掉 bundle 参数
+   - test_evo_tools.py: resolve_tool_functions 签名
+   - test_composite_gateway.py: bundle_workspace/tools/
+   - integration/test_bundle_isolation.py: bundle_workspace 根目录
+
+### 测试状态
+
+- palimpsest: 175 passed ✓
+- trenni: 220 passed ✓
+- yoitsu-contracts: 120 passed ✓
+
 ## 2026-04-11 路径问题修复
 
 ### 完成的工作（严重问题修复）
