@@ -333,10 +333,12 @@ def _event_detail_lines(event: PasloeEvent) -> list[str]:
             lines.append(f"    summary: {summary}")
         if data.get("code"):
             lines.append(f"    code: {data['code']}")
-    elif event_type == "agent.job.failed":
+    elif event_type in {"agent.job.failed", "supervisor.job.failed"}:
         error = str(data.get("error") or "").strip()
         if error:
             lines.append(f"    error: {error}")
+        if data.get("code"):
+            lines.append(f"    code: {data['code']}")
     elif event_type == "agent.job.spawn_request":
         tasks = data.get("tasks") or []
         lines.append(f"    spawned_tasks: {len(tasks)}")
@@ -521,7 +523,7 @@ def _record_watch_event(
         )
         return lines
 
-    if et == "agent.job.failed":
+    if et in {"agent.job.failed", "supervisor.job.failed"}:
         job_counts["failed"] += 1
         err = _shorten(str(data.get("error") or ""), 80)
         if err:
@@ -1048,9 +1050,10 @@ def submit(input_value: str, budget: float, team: str, as_goal: bool) -> None:
                     continue
                 role = raw.pop("role", "")
                 budget = raw.pop("budget", 0.0)
+                bundle = raw.pop("bundle", "")  # Bundle for artifact loading
                 repo = raw.pop("repo", "")
                 init_branch = raw.pop("init_branch", "")
-                team_val = raw.pop("team", "") or "default"
+                raw.pop("team", "")  # Deprecated: TriggerData no longer accepts team
                 params = raw.pop("params", {})
                 eval_spec = raw.pop("eval_spec", None)
                 sha = raw.pop("sha", None)
@@ -1074,9 +1077,10 @@ def submit(input_value: str, budget: float, team: str, as_goal: bool) -> None:
                     "goal": goal,
                     "role": role,
                     "budget": float(budget) if isinstance(budget, (int, float)) else 0.0,
+                    "bundle": bundle,
                     "repo": repo,
                     "init_branch": init_branch,
-                    "team": team_val,
+
                     "params": params,
                     "sha": sha,
                     "eval_spec": eval_spec,
