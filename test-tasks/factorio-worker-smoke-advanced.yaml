@@ -1,0 +1,45 @@
+# Advanced Factorio Worker Smoke Test
+# Tests: multi-step tool execution, state changes, spawn -> inspect -> place -> remove loop
+#
+# Goal: Execute a real in-game task loop
+# 1. Spawn agent character with starting items
+# 2. Inspect the area to understand current state
+# 3. Place an entity (iron-chest)
+# 4. Verify placement via inspect
+# 5. Remove the entity
+# 6. Verify removal via inspect
+#
+# Expected: LLM should call factorio_call_script multiple times with different scripts
+# - actions.spawn with items
+# - actions.inspect
+# - actions.place
+# - actions.inspect (verification)
+# - actions.remove
+# - actions.inspect (final verification)
+
+tasks:
+  - goal: |
+      Execute a complete in-game task loop in Factorio:
+      
+      Step 1: Spawn your agent character near position (0, 0) with 5 iron-chests in inventory.
+      Use: factorio_call_script(name="actions.spawn", args='{"items": {"iron-chest": 5}}')
+      
+      Step 2: Inspect the area around you (radius 10) to see what entities exist.
+      Use: factorio_call_script(name="actions.inspect", args='{"radius": 10}')
+      
+      Step 3: Place an iron-chest at position (2, 0).
+      Use: factorio_call_script(name="actions.place", args='{"name": "iron-chest", "x": 2, "y": 0}')
+      
+      Step 4: Inspect again to verify the chest was placed.
+      Use: factorio_call_script(name="actions.inspect", args='{"radius": 5}')
+      
+      Step 5: Remove the iron-chest you just placed at (2, 0).
+      Use: factorio_call_script(name="actions.remove", args='{"x": 2, "y": 0, "name": "iron-chest"}')
+      
+      Step 6: Final inspect to verify the chest is gone.
+      Use: factorio_call_script(name="actions.inspect", args='{"radius": 5}')
+      
+      Report the result of each step. If any step fails, report the error and stop.
+    role: "worker"
+    bundle: "factorio"
+    budget: 0.5
