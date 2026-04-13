@@ -27,3 +27,4 @@ __pycache__/
 
 # Test outputs
 test-runs/
+.worktrees/
