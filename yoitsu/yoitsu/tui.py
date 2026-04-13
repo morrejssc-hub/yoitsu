@@ -7,9 +7,8 @@ from typing import Any
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal
 from textual.reactive import reactive
-from textual.widgets import DataTable, Footer, Header, Label, Static
+from textual.widgets import DataTable, Footer, Header, Static, TabbedContent, TabPane
 
 from .client import PasloeClient, TrenniClient
 
@@ -228,39 +227,22 @@ def _format_summary(
 
 # ── widgets ──────────────────────────────────────────────────────────────────
 
-class StatusPanel(Static):
-    """Left top panel: Trenni + Podman."""
+class SummaryBar(Static):
+    """Compact 2-3 line summary strip replacing StatusPanel + LlmPanel."""
 
     DEFAULT_CSS = """
-    StatusPanel {
-        border: round $primary;
+    SummaryBar {
+        height: auto;
+        max-height: 3;
         padding: 0 1;
-        height: 10;
-        width: 1fr;
+        background: $surface;
+        border-bottom: solid $primary;
     }
     """
 
     content: reactive[str] = reactive("loading…", layout=True)
 
-    def render(self) -> str:  # type: ignore[override]
-        return self.content
-
-
-class LlmPanel(Static):
-    """Right top panel: LLM usage stats."""
-
-    DEFAULT_CSS = """
-    LlmPanel {
-        border: round $accent;
-        padding: 0 1;
-        height: 10;
-        width: 1fr;
-    }
-    """
-
-    content: reactive[str] = reactive("loading…", layout=True)
-
-    def render(self) -> str:  # type: ignore[override]
+    def render(self) -> str:
         return self.content
 
 
@@ -274,32 +256,27 @@ class MonitorApp(App[None]):
     Screen {
         layout: vertical;
     }
-    #top-row {
-        height: 10;
+    #summary {
+        height: auto;
+        max-height: 3;
     }
-    #events-label, #jobs-label, #tasks-label {
-        background: $primary;
-        color: $text;
-        padding: 0 1;
-        height: 1;
-    }
-    #events-table {
+    TabbedContent {
         height: 1fr;
-        border: none;
     }
-    #jobs-table {
-        height: 1fr;
-        border: none;
+    TabPane {
+        padding: 0;
     }
-    #tasks-table {
+    DataTable {
         height: 1fr;
-        border: none;
     }
     """
 
     BINDINGS = [
         Binding("q", "quit", "Quit"),
         Binding("r", "refresh", "Refresh"),
+        Binding("1", "tab_events", "Events"),
+        Binding("2", "tab_jobs", "Jobs"),
+        Binding("3", "tab_tasks", "Tasks"),
     ]
 
     def __init__(
@@ -319,15 +296,14 @@ class MonitorApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with Horizontal(id="top-row"):
-            yield StatusPanel(id="status-panel")
-            yield LlmPanel(id="llm-panel")
-        yield Label(" Event Layer", id="events-label")
-        yield DataTable(id="events-table", cursor_type="row", zebra_stripes=True)
-        yield Label(" Job Layer", id="jobs-label")
-        yield DataTable(id="jobs-table", cursor_type="row", zebra_stripes=True)
-        yield Label(" Task Layer", id="tasks-label")
-        yield DataTable(id="tasks-table", cursor_type="row", zebra_stripes=True)
+        yield SummaryBar(id="summary")
+        with TabbedContent(id="tabs", initial="tab-events"):
+            with TabPane("Events", id="tab-events"):
+                yield DataTable(id="events-table", cursor_type="row", zebra_stripes=True)
+            with TabPane("Jobs", id="tab-jobs"):
+                yield DataTable(id="jobs-table", cursor_type="row", zebra_stripes=True)
+            with TabPane("Tasks", id="tab-tasks"):
+                yield DataTable(id="tasks-table", cursor_type="row", zebra_stripes=True)
         yield Footer()
 
     def on_mount(self) -> None:
@@ -355,11 +331,19 @@ class MonitorApp(App[None]):
     async def action_refresh(self) -> None:
         await self._do_refresh()
 
+    def action_tab_events(self) -> None:
+        self.query_one("#tabs", TabbedContent).active = "tab-events"
+
+    def action_tab_jobs(self) -> None:
+        self.query_one("#tabs", TabbedContent).active = "tab-jobs"
+
+    def action_tab_tasks(self) -> None:
+        self.query_one("#tabs", TabbedContent).active = "tab-tasks"
+
     async def _do_refresh(self) -> None:
         try:
             await asyncio.gather(
-                self._refresh_status(),
-                self._refresh_llm(),
+                self._refresh_summary(),
                 self._refresh_events(),
                 self._refresh_jobs(),
                 self._refresh_tasks(),
@@ -368,76 +352,30 @@ class MonitorApp(App[None]):
         except Exception:
             pass
 
-    # ── status panel ─────────────────────────────────────────────────────────
+    async def _refresh_summary(self) -> None:
+        assert self._trenni is not None and self._pasloe is not None
+        trenni_st, podman_info, llm_stats = await asyncio.gather(
+            self._trenni.get_status(),
+            asyncio.get_running_loop().run_in_executor(None, _podman_summary),
+            self._pasloe.get_llm_stats(),
+            return_exceptions=True,
+        )
+        # If any returned an exception, treat as None/unavailable
+        if isinstance(trenni_st, Exception):
+            trenni_st = None
+        if isinstance(podman_info, Exception):
+            podman_info = {"available": False}
+        if isinstance(llm_stats, Exception):
+            llm_stats = None
 
-    async def _refresh_status(self) -> None:
-        assert self._trenni is not None
-        st = await self._trenni.get_status()
-        lines: list[str] = []
-        if st:
-            lines.append(
-                f"[b]Trenni[/b]  jobs [green]{st.get('running_jobs', '?')}"
-                f"[/green]/[dim]{st.get('max_workers', '?')}[/dim]  "
-                f"pending [yellow]{st.get('pending_jobs', '?')}[/yellow]  "
-                f"ready {st.get('ready_queue_size', '?')}"
-            )
-            tasks_map: dict = st.get("tasks", {}) or {}
-            lines.append(f"        tasks in memory: {len(tasks_map)}")
-        else:
-            lines.append("[red]Trenni  unreachable[/red]")
-
-        ps = await asyncio.get_running_loop().run_in_executor(None, _podman_summary)
-        if ps.get("available"):
-            lines.append(
-                f"\n[b]Podman[/b]  running [green]{ps['running']}[/green]  "
-                f"exited [dim]{ps['exited']}[/dim]  "
-                f"total {ps['total']}"
-            )
-        else:
-            lines.append("\n[b]Podman[/b]  [dim]not available[/dim]")
-
-        panel: StatusPanel = self.query_one("#status-panel", StatusPanel)
-        panel.content = "\n".join(lines)
-
-    # ── llm panel ────────────────────────────────────────────────────────────
-
-    async def _refresh_llm(self) -> None:
-        assert self._pasloe is not None
-        stats = await self._pasloe.get_llm_stats()
-        panel: LlmPanel = self.query_one("#llm-panel", LlmPanel)
-        if not stats:
-            panel.content = "[red]LLM stats  unreachable[/red]"
-            return
-
-        lines = ["[b]LLM Usage[/b]"]
-        by_model = stats.get("by_model", [])
-        total_input = total_output = total_cost = 0.0
-        for row in by_model:
-            model = _shorten(row.get("model", ""), 24)
-            inp = row.get("total_input_tokens", 0) or 0
-            out = row.get("total_output_tokens", 0) or 0
-            cost = row.get("total_cost", 0.0) or 0.0
-            total_input += inp
-            total_output += out
-            total_cost += cost
-            lines.append(
-                f"  [dim]{model}[/dim]  in {inp:,}  out {out:,}  "
-                f"[yellow]${cost:.3f}[/yellow]"
-            )
-        if by_model:
-            lines.append(
-                f"\n  [b]total[/b]  in {total_input:,.0f}  out {total_output:,.0f}  "
-                f"[bold yellow]${total_cost:.3f}[/bold yellow]"
-            )
-        else:
-            lines.append("  [dim](no data yet)[/dim]")
-        panel.content = "\n".join(lines)
+        bar: SummaryBar = self.query_one("#summary", SummaryBar)
+        bar.content = _format_summary(trenni_st, podman_info, llm_stats)
 
     # ── events table ──────────────────────────────────────────────────────────
 
     async def _refresh_events(self) -> None:
         assert self._pasloe is not None
-        events = await self._pasloe.list_events(limit=40)
+        events = await self._pasloe.list_events(limit=100)
         table: DataTable = self.query_one("#events-table", DataTable)
         table.clear()
         if not events:
@@ -461,7 +399,7 @@ class MonitorApp(App[None]):
         table.clear()
         if not jobs:
             return
-        for j in jobs[:50]:
+        for j in jobs:
             state = str(j.get("state") or "")
             table.add_row(
                 _shorten(j.get("job_id"), 16),
@@ -480,7 +418,7 @@ class MonitorApp(App[None]):
         table.clear()
         if not tasks:
             return
-        for t in tasks[:50]:
+        for t in tasks:
             state = str(t.get("state") or "")
             table.add_row(
                 _shorten(t.get("task_id"), 16),
