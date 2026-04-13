@@ -7,8 +7,9 @@ from typing import Any
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.events import Key
 from textual.reactive import reactive
-from textual.widgets import DataTable, Footer, Header, Static, TabbedContent, TabPane
+from textual.widgets import DataTable, Footer, Header, Input, Static, TabbedContent, TabPane
 
 from .client import PasloeClient, TrenniClient
 
@@ -91,6 +92,14 @@ def _state_cell(state: str, *, task: bool = False) -> str:
         else ""
     )
     return f"[{style}]{state}[/{style}]" if style else state
+
+
+def _matches_filter(row: tuple[str, ...], query: str) -> bool:
+    """Return True if any cell in row contains query (case-insensitive)."""
+    if not query:
+        return True
+    q = query.lower()
+    return any(q in str(cell).lower() for cell in row)
 
 
 def _build_task_tree(
@@ -264,16 +273,26 @@ class MonitorApp(App[None]):
         height: 1fr;
     }
     TabPane {
+        layout: vertical;
         padding: 0;
     }
     DataTable {
         height: 1fr;
+    }
+    .filter-input {
+        dock: top;
+        height: 1;
+        display: block;
+    }
+    .filter-input.hidden {
+        display: none;
     }
     """
 
     BINDINGS = [
         Binding("q", "quit", "Quit"),
         Binding("r", "refresh", "Refresh"),
+        Binding("slash", "filter", "Filter"),
         Binding("1", "tab_events", "Events"),
         Binding("2", "tab_jobs", "Jobs"),
         Binding("3", "tab_tasks", "Tasks"),
@@ -293,16 +312,28 @@ class MonitorApp(App[None]):
         self._interval = interval
         self._pasloe: PasloeClient | None = None
         self._trenni: TrenniClient | None = None
+        # Data caching for client-side filtering
+        self._events_data: list[tuple[str, ...]] = []
+        self._jobs_data: list[tuple[str, ...]] = []
+        self._tasks_data: list[tuple[str, ...]] = []
+        self._filter_text: dict[str, str] = {
+            "tab-events": "",
+            "tab-jobs": "",
+            "tab-tasks": "",
+        }
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         yield SummaryBar(id="summary")
         with TabbedContent(id="tabs", initial="tab-events"):
             with TabPane("Events", id="tab-events"):
+                yield Input(placeholder="filter…", id="filter-events", classes="filter-input hidden")
                 yield DataTable(id="events-table", cursor_type="row", zebra_stripes=True)
             with TabPane("Jobs", id="tab-jobs"):
+                yield Input(placeholder="filter…", id="filter-jobs", classes="filter-input hidden")
                 yield DataTable(id="jobs-table", cursor_type="row", zebra_stripes=True)
             with TabPane("Tasks", id="tab-tasks"):
+                yield Input(placeholder="filter…", id="filter-tasks", classes="filter-input hidden")
                 yield DataTable(id="tasks-table", cursor_type="row", zebra_stripes=True)
         yield Footer()
 
@@ -339,6 +370,70 @@ class MonitorApp(App[None]):
 
     def action_tab_tasks(self) -> None:
         self.query_one("#tabs", TabbedContent).active = "tab-tasks"
+
+    def action_filter(self) -> None:
+        """Toggle filter input for the current tab."""
+        tabs = self.query_one("#tabs", TabbedContent)
+        active_tab = tabs.active
+        filter_id = f"filter-{active_tab.replace('tab-', '')}"
+        try:
+            filter_input = self.query_one(f"#{filter_id}", Input)
+            if filter_input.has_class("hidden"):
+                filter_input.remove_class("hidden")
+                filter_input.focus()
+            else:
+                filter_input.add_class("hidden")
+                filter_input.value = ""
+                self._filter_text[active_tab] = ""
+                self._apply_filter(active_tab)
+        except Exception:
+            pass
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Handle filter input changes."""
+        input_widget = event.input
+        if input_widget.id and input_widget.id.startswith("filter-"):
+            tab_id = f"tab-{input_widget.id.replace('filter-', '')}"
+            self._filter_text[tab_id] = event.value
+            self._apply_filter(tab_id)
+
+    def on_key(self, event: Key) -> None:
+        """Handle Escape key to clear/hide filter."""
+        if event.key == "escape":
+            tabs = self.query_one("#tabs", TabbedContent)
+            active_tab = tabs.active
+            filter_id = f"filter-{active_tab.replace('tab-', '')}"
+            try:
+                filter_input = self.query_one(f"#{filter_id}", Input)
+                if not filter_input.has_class("hidden"):
+                    filter_input.add_class("hidden")
+                    filter_input.value = ""
+                    self._filter_text[active_tab] = ""
+                    self._apply_filter(active_tab)
+            except Exception:
+                pass
+
+    def _apply_filter(self, tab_id: str) -> None:
+        """Re-filter cached data for the given tab."""
+        query = self._filter_text.get(tab_id, "")
+        if tab_id == "tab-events":
+            table: DataTable = self.query_one("#events-table", DataTable)
+            table.clear()
+            for row in self._events_data:
+                if _matches_filter(row, query):
+                    table.add_row(*row)
+        elif tab_id == "tab-jobs":
+            table = self.query_one("#jobs-table", DataTable)
+            table.clear()
+            for row in self._jobs_data:
+                if _matches_filter(row, query):
+                    table.add_row(*row)
+        elif tab_id == "tab-tasks":
+            table = self.query_one("#tasks-table", DataTable)
+            table.clear()
+            for row in self._tasks_data:
+                if _matches_filter(row, query):
+                    table.add_row(*row)
 
     async def _do_refresh(self) -> None:
         try:
@@ -379,16 +474,21 @@ class MonitorApp(App[None]):
         table: DataTable = self.query_one("#events-table", DataTable)
         table.clear()
         if not events:
+            self._events_data = []
             return
-        for event in events:
-            data = event.get("data") or {}
-            table.add_row(
+        # Cache the data
+        self._events_data = [
+            (
                 _event_ts(event.get("ts")),
                 _shorten(event.get("type"), 30),
                 _shorten(event.get("source_id"), 18),
-                _event_refs(data),
+                _event_refs(event.get("data") or {}),
                 _event_detail(event),
             )
+            for event in events
+        ]
+        # Apply current filter
+        self._apply_filter("tab-events")
 
     # ── jobs table ────────────────────────────────────────────────────────────
 
@@ -398,16 +498,21 @@ class MonitorApp(App[None]):
         table: DataTable = self.query_one("#jobs-table", DataTable)
         table.clear()
         if not jobs:
+            self._jobs_data = []
             return
-        for j in jobs:
-            state = str(j.get("state") or "")
-            table.add_row(
+        # Cache the data
+        self._jobs_data = [
+            (
                 _shorten(j.get("job_id"), 16),
-                _state_cell(state),
+                _state_cell(str(j.get("state") or "")),
                 _shorten(j.get("bundle"), 16),
                 _shorten(j.get("role"), 12),
                 _shorten(j.get("task_id"), 16),
             )
+            for j in jobs
+        ]
+        # Apply current filter
+        self._apply_filter("tab-jobs")
 
     # ── tasks table ──────────────────────────────────────────────────────────
 
@@ -417,15 +522,20 @@ class MonitorApp(App[None]):
         table: DataTable = self.query_one("#tasks-table", DataTable)
         table.clear()
         if not tasks:
+            self._tasks_data = []
             return
-        for t in tasks:
-            state = str(t.get("state") or "")
-            table.add_row(
+        # Cache the data
+        self._tasks_data = [
+            (
                 _shorten(t.get("task_id"), 16),
-                _state_cell(state, task=True),
+                _state_cell(str(t.get("state") or ""), task=True),
                 _shorten(t.get("bundle"), 16),
                 _shorten(t.get("goal"), 60),
             )
+            for t in tasks
+        ]
+        # Apply current filter
+        self._apply_filter("tab-tasks")
 
 
 # ── entry point ──────────────────────────────────────────────────────────────

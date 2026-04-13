@@ -133,3 +133,25 @@ def test_format_summary_services_down():
 
     result = _format_summary(None, {"available": False}, None)
     assert "unreachable" in result.lower() or "?" in result
+
+
+# ── filter helper tests ───────────────────────────────────────────────────────
+
+
+def test_matches_filter_case_insensitive():
+    """Filter matches any cell case-insensitively."""
+    from yoitsu.tui import _matches_filter
+
+    row = ("12:00:00", "agent.job.completed", "palimpsest", "job:abc", "done")
+    assert _matches_filter(row, "completed")
+    assert _matches_filter(row, "COMPLETED")
+    assert _matches_filter(row, "pali")
+    assert not _matches_filter(row, "nonexistent")
+
+
+def test_matches_filter_empty_passes_all():
+    """Empty filter passes all rows."""
+    from yoitsu.tui import _matches_filter
+
+    row = ("a", "b", "c")
+    assert _matches_filter(row, "")
