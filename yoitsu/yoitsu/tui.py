@@ -94,6 +94,138 @@ def _state_cell(state: str, *, task: bool = False) -> str:
     return f"[{style}]{state}[/{style}]" if style else state
 
 
+def _build_task_tree(
+    tasks: list[dict[str, Any]],
+) -> tuple[dict[str, list[str]], list[str]]:
+    """Build parent→children mapping from hierarchical task_ids.
+
+    Returns (tree, roots) where tree maps each task_id to its direct children
+    and roots is the list of task_ids with no parent in the dataset.
+    """
+    all_ids = {t["task_id"] for t in tasks}
+    tree: dict[str, list[str]] = {tid: [] for tid in all_ids}
+    roots: list[str] = []
+
+    for tid in sorted(all_ids):
+        if "/" not in tid:
+            roots.append(tid)
+            continue
+        parent = tid.rsplit("/", 1)[0]
+        if parent in tree:
+            tree[parent].append(tid)
+        else:
+            roots.append(tid)
+
+    return tree, roots
+
+
+def _render_dag(
+    tree: dict[str, list[str]],
+    tasks_by_id: dict[str, dict[str, Any]],
+    current_task_id: str,
+    roots: list[str] | None = None,
+) -> str:
+    """Render ASCII DAG centered on current_task_id.
+
+    Shows: parent chain → siblings (with current marked) → children of current.
+
+    Args:
+        tree: Parent→children mapping from _build_task_tree
+        tasks_by_id: Task metadata dict keyed by task_id
+        current_task_id: The task to center the DAG around
+        roots: Optional list of root task_ids. If not provided, computed from tasks_by_id.
+    """
+    lines: list[str] = []
+
+    def _state_tag(tid: str) -> str:
+        t = tasks_by_id.get(tid, {})
+        st = t.get("state", "?")
+        return _state_cell(st, task=True)
+
+    # Compute roots if not provided
+    if roots is None:
+        roots = [tid for tid in tasks_by_id if "/" not in tid]
+
+    # Find parent
+    parent_id = current_task_id.rsplit("/", 1)[0] if "/" in current_task_id else None
+    if parent_id and parent_id in tasks_by_id:
+        lines.append(f"  ↑ {parent_id}  {_state_tag(parent_id)}")
+    elif parent_id:
+        lines.append(f"  ↑ {parent_id}  [dim](not loaded)[/dim]")
+
+    # Siblings (children of parent, or all roots if current is root)
+    if parent_id and parent_id in tree:
+        siblings = tree[parent_id]
+    else:
+        # current is a root — show all roots as siblings
+        siblings = roots
+
+    for i, sib in enumerate(siblings):
+        is_last = i == len(siblings) - 1
+        prefix = "└── " if is_last else "├── "
+        marker = " ←" if sib == current_task_id else ""
+        lines.append(f"  {prefix}{sib}  {_state_tag(sib)}{marker}")
+
+        # Show children of the current task
+        if sib == current_task_id and sib in tree:
+            children = tree[sib]
+            for j, child in enumerate(children):
+                child_is_last = j == len(children) - 1
+                indent = "    " if is_last else "│   "
+                child_prefix = "└── " if child_is_last else "├── "
+                lines.append(f"  {indent}{child_prefix}{child}  {_state_tag(child)}")
+
+    return "\n".join(lines)
+
+
+def _format_summary(
+    trenni: dict[str, Any] | None,
+    podman: dict[str, Any],
+    llm: dict[str, Any] | None,
+) -> str:
+    """Format compact 2-line summary for SummaryBar."""
+    parts_line1: list[str] = []
+    parts_line2: list[str] = []
+
+    # Trenni
+    if trenni:
+        parts_line1.append(
+            f"[b]Trenni[/b] [green]{trenni.get('running_jobs', '?')}[/green]"
+            f"/[dim]{trenni.get('max_workers', '?')}[/dim] running  "
+            f"[yellow]{trenni.get('pending_jobs', '?')}[/yellow] pending  "
+            f"ready {trenni.get('ready_queue_size', '?')}"
+        )
+        tasks_map = trenni.get("tasks") or {}
+        if isinstance(tasks_map, dict):
+            parts_line2.append(f"tasks: {len(tasks_map)}")
+    else:
+        parts_line1.append("[red]Trenni unreachable[/red]")
+
+    # Podman
+    if podman.get("available"):
+        parts_line1.append(
+            f"[b]Podman[/b] [green]{podman['running']}[/green]▶ "
+            f"[dim]{podman['exited']}[/dim]✗"
+        )
+    else:
+        parts_line1.append("[b]Podman[/b] [dim]n/a[/dim]")
+
+    # LLM
+    if llm:
+        by_model = llm.get("by_model", [])
+        total_input = sum(r.get("total_input_tokens", 0) or 0 for r in by_model)
+        total_output = sum(r.get("total_output_tokens", 0) or 0 for r in by_model)
+        total_cost = sum(r.get("total_cost", 0.0) or 0.0 for r in by_model)
+        parts_line1.append(f"[bold yellow]${total_cost:.2f}[/bold yellow]")
+        parts_line2.append(f"in {total_input:,.0f}  out {total_output:,.0f}")
+    else:
+        parts_line1.append("[red]LLM ?[/red]")
+
+    line1 = "  │  ".join(parts_line1)
+    line2 = "  │  ".join(parts_line2) if parts_line2 else ""
+    return f"{line1}\n{line2}" if line2 else line1
+
+
 # ── widgets ──────────────────────────────────────────────────────────────────
 
 class StatusPanel(Static):
