@@ -359,6 +359,149 @@ class JobDetailScreen(Screen[None]):
             )
 
 
+# ── task detail screen ───────────────────────────────────────────────────────
+
+class TaskDetailScreen(Screen[None]):
+    """Detail view for a single task with DAG visualization."""
+
+    BINDINGS = [
+        Binding("escape", "dismiss", "Back"),
+        Binding("q", "dismiss", "Back"),
+        Binding("r", "refresh_detail", "Refresh"),
+    ]
+
+    CSS = """
+    TaskDetailScreen {
+        layout: vertical;
+    }
+    #task-meta {
+        height: auto;
+        max-height: 8;
+        padding: 1 2;
+        border-bottom: solid $primary;
+    }
+    #task-dag {
+        height: auto;
+        max-height: 15;
+        padding: 0 2;
+        border-bottom: solid $accent;
+    }
+    #task-jobs-label {
+        background: $primary;
+        color: $text;
+        padding: 0 1;
+        height: 1;
+    }
+    #task-jobs {
+        height: 1fr;
+    }
+    #task-result {
+        height: auto;
+        max-height: 6;
+        padding: 0 2;
+        border-top: solid $primary;
+    }
+    """
+
+    def __init__(self, task_id: str, pasloe: "PasloeClient", trenni: "TrenniClient") -> None:
+        super().__init__()
+        self._task_id = task_id
+        self._pasloe = pasloe
+        self._trenni = trenni
+        self._all_tasks: list[dict[str, Any]] = []
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=False)
+        yield Static(f"[b]Task:[/b] {self._task_id}\nloading…", id="task-meta")
+        yield Static("loading DAG…", id="task-dag")
+        yield Label(" Jobs for this Task", id="task-jobs-label")
+        yield DataTable(id="task-jobs", cursor_type="row", zebra_stripes=True)
+        yield Static("", id="task-result")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        table: DataTable = self.query_one("#task-jobs", DataTable)
+        table.add_columns("job_id", "state", "role")
+        self.run_worker(self._load(), exclusive=False, exit_on_error=False)
+
+    async def action_refresh_detail(self) -> None:
+        self.run_worker(self._load(), exclusive=True, exit_on_error=False)
+
+    async def _load(self) -> None:
+        meta_widget: Static = self.query_one("#task-meta", Static)
+        dag_widget: Static = self.query_one("#task-dag", Static)
+        table: DataTable = self.query_one("#task-jobs", DataTable)
+        result_widget: Static = self.query_one("#task-result", Static)
+
+        task_detail, all_tasks, task_jobs = await asyncio.gather(
+            self._trenni.get_task(self._task_id),
+            self._trenni.get_tasks(),
+            self._trenni.get_jobs(task_id=self._task_id),
+            return_exceptions=True,
+        )
+
+        # Task metadata
+        if isinstance(task_detail, Exception) or not task_detail:
+            meta_widget.update(f"[red]Task {self._task_id} not found[/red]")
+            return
+
+        state = str(task_detail.get("state", ""))
+        lines = [
+            f"[b]Task:[/b] {task_detail.get('task_id', '')}  {_state_cell(state, task=True)}",
+            f"[b]Bundle:[/b] {task_detail.get('bundle', '')}",
+            f"[b]Goal:[/b] {task_detail.get('goal', '')}",
+        ]
+        if task_detail.get("eval_spawned"):
+            lines.append(f"[b]Eval job:[/b] {task_detail.get('eval_job_id', '')}")
+        meta_widget.update("\n".join(lines))
+
+        # DAG
+        if isinstance(all_tasks, Exception) or not all_tasks:
+            dag_widget.update("[dim]DAG unavailable[/dim]")
+        else:
+            tasks_by_id = {t["task_id"]: t for t in all_tasks}
+            tree, roots = _build_task_tree(all_tasks)
+            dag_text = _render_dag(tree, tasks_by_id, self._task_id, roots)
+            dag_widget.update(f"[b]DAG[/b]\n{dag_text}")
+            self._all_tasks = all_tasks
+
+        # Jobs
+        table.clear()
+        if not isinstance(task_jobs, Exception) and task_jobs:
+            for j in task_jobs:
+                job_state = str(j.get("state", ""))
+                table.add_row(
+                    _shorten(j.get("job_id"), 24),
+                    _state_cell(job_state),
+                    j.get("role", ""),
+                    key=j.get("job_id", ""),
+                )
+
+        # Result
+        result = task_detail.get("result")
+        if result:
+            r_lines = []
+            sem = result.get("semantic", {})
+            if sem.get("verdict"):
+                r_lines.append(f"[b]Verdict:[/b] {sem['verdict']}  {_shorten(sem.get('summary', ''), 60)}")
+            trace = result.get("trace", [])
+            if trace:
+                r_lines.append(f"[b]Trace:[/b] {len(trace)} entries")
+                for entry in trace[:5]:
+                    r_lines.append(
+                        f"  {entry.get('role', '?')}: {entry.get('outcome', '?')} — {_shorten(entry.get('summary', ''), 50)}"
+                    )
+            result_widget.update("\n".join(r_lines) if r_lines else "")
+        else:
+            result_widget.update("")
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        """Enter on a job in this task → push job detail."""
+        row_key = str(event.row_key.value)
+        if row_key:
+            self.app.push_screen(JobDetailScreen(row_key, self._pasloe, self._trenni))
+
+
 # ── main app ─────────────────────────────────────────────────────────────────
 
 class MonitorApp(App[None]):
@@ -537,8 +680,9 @@ class MonitorApp(App[None]):
             table = self.query_one("#tasks-table", DataTable)
             table.clear()
             for row in self._tasks_data:
-                if _matches_filter(row, query):
-                    table.add_row(*row)
+                # row[0] is full task_id (key), row[1:] are display columns
+                if _matches_filter(row[1:], query):
+                    table.add_row(row[1], row[2], row[3], row[4], key=row[0])
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Handle Enter on a table row."""
@@ -548,8 +692,9 @@ class MonitorApp(App[None]):
             if row_key and self._pasloe and self._trenni:
                 self.push_screen(JobDetailScreen(row_key, self._pasloe, self._trenni))
         elif table.id == "tasks-table":
-            # Will be implemented in Task 6
-            pass
+            row_key = str(event.row_key.value)
+            if row_key and self._pasloe and self._trenni:
+                self.push_screen(TaskDetailScreen(row_key, self._pasloe, self._trenni))
 
     async def _do_refresh(self) -> None:
         try:
@@ -644,9 +789,10 @@ class MonitorApp(App[None]):
         if not tasks:
             self._tasks_data = []
             return
-        # Cache the data
+        # Cache the data (full task_id as first element for lookup)
         self._tasks_data = [
             (
+                t.get("task_id", ""),  # full task_id for row key
                 _shorten(t.get("task_id"), 16),
                 _state_cell(str(t.get("state") or ""), task=True),
                 _shorten(t.get("bundle"), 16),
@@ -654,8 +800,11 @@ class MonitorApp(App[None]):
             )
             for t in tasks
         ]
-        # Apply current filter
-        self._apply_filter("tab-tasks")
+        # Apply current filter, using task_id as row key
+        query = self._filter_text.get("tab-tasks", "")
+        for row in self._tasks_data:
+            if _matches_filter(row[1:], query):  # filter on display columns
+                table.add_row(row[1], row[2], row[3], row[4], key=row[0])
 
 
 # ── entry point ──────────────────────────────────────────────────────────────
