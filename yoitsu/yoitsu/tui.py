@@ -9,7 +9,8 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.events import Key
 from textual.reactive import reactive
-from textual.widgets import DataTable, Footer, Header, Input, Static, TabbedContent, TabPane
+from textual.screen import Screen
+from textual.widgets import DataTable, Footer, Header, Input, Label, Static, TabbedContent, TabPane
 
 from .client import PasloeClient, TrenniClient
 
@@ -255,6 +256,109 @@ class SummaryBar(Static):
         return self.content
 
 
+# ── job detail screen ────────────────────────────────────────────────────────
+
+class JobDetailScreen(Screen[None]):
+    """Detail view for a single job, showing metadata and related events."""
+
+    TITLE = "Job Detail"
+    CSS = """
+    JobDetailScreen {
+        layout: vertical;
+    }
+    .job-meta {
+        height: auto;
+        padding: 0 1;
+        background: $surface;
+        border-bottom: solid $primary;
+    }
+    .job-events-label {
+        height: 1;
+        padding: 0 1;
+        background: $surface;
+    }
+    #job-events-table {
+        height: 1fr;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "dismiss", "Back"),
+        Binding("q", "dismiss", "Back"),
+        Binding("r", "refresh_detail", "Refresh"),
+    ]
+
+    def __init__(
+        self,
+        job_id: str,
+        pasloe: PasloeClient,
+        trenni: TrenniClient,
+    ) -> None:
+        super().__init__()
+        self._job_id = job_id
+        self._pasloe = pasloe
+        self._trenni = trenni
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+        yield Static(id="job-meta", classes="job-meta")
+        yield Label("Job Events", classes="job-events-label")
+        yield DataTable(id="job-events-table", cursor_type="row", zebra_stripes=True)
+        yield Footer()
+
+    def on_mount(self) -> None:
+        table: DataTable = self.query_one("#job-events-table", DataTable)
+        table.add_columns("ts", "type", "source", "detail")
+        self.run_worker(self._load(), exclusive=True, exit_on_error=False)
+
+    def action_refresh_detail(self) -> None:
+        self.run_worker(self._load(), exclusive=True, exit_on_error=False)
+
+    async def _load(self) -> None:
+        """Fetch job details and events, update display."""
+        # Fetch job details from trenni
+        job = await self._trenni.get_job(self._job_id)
+
+        # Update meta widget
+        meta: Static = self.query_one("#job-meta", Static)
+        if job:
+            state = job.get("state", "?")
+            bundle = job.get("bundle", "?")
+            role = job.get("role", "?")
+            task_id = job.get("task_id", "-")
+            created = job.get("created_at", "-")
+            if created:
+                created = _event_ts(created)
+            meta.update(
+                f"[b]Job:[/b] {self._job_id}  "
+                f"[b]State:[/b] {_state_cell(state)}  "
+                f"[b]Bundle:[/b] {bundle}  "
+                f"[b]Role:[/b] {role}  "
+                f"[b]Task:[/b] {task_id}  "
+                f"[b]Created:[/b] {created}"
+            )
+        else:
+            meta.update(f"[red]Job {self._job_id} not found[/red]")
+
+        # Fetch events from pasloe and filter by job_id
+        events = await self._pasloe.list_events(limit=100) or []
+        job_events = [
+            e for e in events
+            if (e.get("data") or {}).get("job_id") == self._job_id
+        ]
+
+        # Update events table
+        table: DataTable = self.query_one("#job-events-table", DataTable)
+        table.clear()
+        for event in job_events:
+            table.add_row(
+                _event_ts(event.get("ts")),
+                _shorten(event.get("type"), 30),
+                _shorten(event.get("source_id"), 18),
+                _event_detail(event),
+            )
+
+
 # ── main app ─────────────────────────────────────────────────────────────────
 
 class MonitorApp(App[None]):
@@ -426,14 +530,26 @@ class MonitorApp(App[None]):
             table = self.query_one("#jobs-table", DataTable)
             table.clear()
             for row in self._jobs_data:
-                if _matches_filter(row, query):
-                    table.add_row(*row)
+                # row[0] is full job_id (key), row[1:] are display columns
+                if _matches_filter(row[1:], query):
+                    table.add_row(row[1], row[2], row[3], row[4], row[5], key=row[0])
         elif tab_id == "tab-tasks":
             table = self.query_one("#tasks-table", DataTable)
             table.clear()
             for row in self._tasks_data:
                 if _matches_filter(row, query):
                     table.add_row(*row)
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        """Handle Enter on a table row."""
+        table = event.data_table
+        if table.id == "jobs-table":
+            row_key = str(event.row_key.value)
+            if row_key and self._pasloe and self._trenni:
+                self.push_screen(JobDetailScreen(row_key, self._pasloe, self._trenni))
+        elif table.id == "tasks-table":
+            # Will be implemented in Task 6
+            pass
 
     async def _do_refresh(self) -> None:
         try:
@@ -500,9 +616,10 @@ class MonitorApp(App[None]):
         if not jobs:
             self._jobs_data = []
             return
-        # Cache the data
+        # Cache the data (full job_id as first element for lookup)
         self._jobs_data = [
             (
+                j.get("job_id", ""),  # full job_id for row key
                 _shorten(j.get("job_id"), 16),
                 _state_cell(str(j.get("state") or "")),
                 _shorten(j.get("bundle"), 16),
@@ -511,8 +628,11 @@ class MonitorApp(App[None]):
             )
             for j in jobs
         ]
-        # Apply current filter
-        self._apply_filter("tab-jobs")
+        # Apply current filter, using job_id as row key
+        query = self._filter_text.get("tab-jobs", "")
+        for row in self._jobs_data:
+            if _matches_filter(row[1:], query):  # filter on display columns
+                table.add_row(row[1], row[2], row[3], row[4], row[5], key=row[0])
 
     # ── tasks table ──────────────────────────────────────────────────────────
 
