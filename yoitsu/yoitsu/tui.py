@@ -614,8 +614,12 @@ class MonitorApp(App[None]):
         tasks_table: DataTable = self.query_one("#tasks-table", DataTable)
         tasks_table.add_columns("task_id", "state", "bundle", "goal")
 
-        self.set_interval(self._interval, self._do_refresh)
-        self.run_worker(self._do_refresh(), exclusive=False, exit_on_error=False)
+        self.set_interval(self._interval, self._schedule_refresh)
+        self._schedule_refresh()
+
+    def _schedule_refresh(self) -> None:
+        """Sync wrapper for interval callback to properly run async refresh."""
+        self.run_worker(self._do_refresh(), exclusive=True, exit_on_error=False)
 
     async def on_unmount(self) -> None:
         if self._pasloe:
