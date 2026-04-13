@@ -1,6 +1,9 @@
 """Tests for TUI helper functions."""
 from __future__ import annotations
 
+import pytest
+from unittest.mock import AsyncMock
+
 
 def test_build_task_tree_flat():
     """Root tasks with no children produce tree with empty child lists."""
@@ -155,3 +158,76 @@ def test_matches_filter_empty_passes_all():
 
     row = ("a", "b", "c")
     assert _matches_filter(row, "")
+
+
+# ── integration tests ─────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def mock_trenni():
+    """Mock TrenniClient for integration tests."""
+    client = AsyncMock()
+    client.get_status = AsyncMock(return_value={
+        "running_jobs": 1, "max_workers": 4, "pending_jobs": 2,
+        "ready_queue_size": 0, "tasks": {"t1": {}}
+    })
+    client.get_jobs = AsyncMock(return_value=[
+        {"job_id": "j1", "state": "running", "bundle": "factorio", "role": "worker", "task_id": "t1"},
+        {"job_id": "j2", "state": "completed", "bundle": "factorio", "role": "evaluator", "task_id": "t1"},
+    ])
+    client.get_tasks = AsyncMock(return_value=[
+        {"task_id": "t1", "state": "running", "bundle": "factorio", "goal": "Build things"},
+    ])
+    client.get_job = AsyncMock(return_value={
+        "job_id": "j1", "state": "running", "bundle": "factorio", "role": "worker",
+        "task_id": "t1", "parent_job_id": "", "condition": None, "job_context": {},
+    })
+    client.get_task = AsyncMock(return_value={
+        "task_id": "t1", "state": "running", "bundle": "factorio",
+        "goal": "Build things", "eval_spawned": False, "eval_job_id": "",
+        "job_order": ["j1"], "result": None,
+    })
+    client.aclose = AsyncMock()
+    return client
+
+
+@pytest.fixture
+def mock_pasloe():
+    """Mock PasloeClient for integration tests."""
+    client = AsyncMock()
+    client.get_llm_stats = AsyncMock(return_value={
+        "by_model": [{"model": "claude", "total_input_tokens": 1000, "total_output_tokens": 500, "total_cost": 0.05}]
+    })
+    client.list_events = AsyncMock(return_value=[
+        {"ts": "2026-04-13T12:00:00Z", "type": "agent.job.started", "source_id": "palimpsest",
+         "data": {"job_id": "j1", "task_id": "t1", "workspace_path": "/tmp"}},
+    ])
+    client.aclose = AsyncMock()
+    return client
+
+
+async def test_monitor_app_renders_tabs(mock_trenni, mock_pasloe):
+    """App should render with summary bar and three tabs."""
+    from yoitsu.tui import MonitorApp
+    from unittest.mock import patch
+
+    app = MonitorApp(pasloe_url="http://test", trenni_url="http://test", api_key="test")
+    # Inject mocked clients
+    async with app.run_test(size=(120, 40)) as pilot:
+        app._pasloe = mock_pasloe
+        app._trenni = mock_trenni
+        with patch("yoitsu.tui._podman_summary", return_value={"available": True, "running": 3, "exited": 1, "total": 4}):
+            await app._do_refresh()
+
+        # Check summary bar has content
+        from textual.widgets import TabbedContent
+        tabs = app.query_one("#tabs", TabbedContent)
+        assert tabs.active == "tab-events"
+
+        # Switch to jobs tab
+        await pilot.press("2")
+        assert tabs.active == "tab-jobs"
+
+        # Switch to tasks tab
+        await pilot.press("3")
+        assert tabs.active == "tab-tasks"
