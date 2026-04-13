@@ -28,6 +28,7 @@ bundles:
     source:
       url: "https://github.com/guan-spicy-wolf/factorio-bundle.git"
       selector: "evolve"  # Branch to track for evolution
+    default_role: "planner"  # Entry role for external triggers
     scheduling:
       max_concurrent_jobs: 1  # Serialize implementer writes to live bundle
 
