@@ -1,0 +1,17 @@
+# Version bump task (for external test repo)
+# Tests: reading existing files, modifying content, git push
+
+tasks:
+  - goal: |
+      Find the README.md file and bump the version number.
+      If the file contains "Version X.Y.Z", change it to "Version X.Y.(Z+1)".
+      For example: "Version 0.0.3" -> "Version 0.0.4"
+      
+      Do not make any other changes.
+      If no version is found, add "Version 0.0.1" to the end of the file.
+    team: default
+    budget: 0.35
+    context:
+      repo: https://github.com/guan-spicy-wolf/palimpsest-test.git
+      init_branch: main
+      new_branch: true

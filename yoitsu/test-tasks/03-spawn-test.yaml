@@ -1,0 +1,20 @@
+# Spawn mode test
+# Tests: planner -> spawn -> implementer -> eval pipeline
+
+tasks:
+  - goal: |
+      This is a spawn-mode test. You MUST use spawn to delegate work to child tasks.
+      
+      Requirements:
+      1. Use spawn to create exactly ONE child task
+      2. The child task should create a file smoke/SPAWN-TEST.txt with content: "spawn: ok"
+      3. Include all required spawn parameters: role, goal, budget, params.repo, params.init_branch, eval_spec.deliverables, eval_spec.criteria
+      4. After the child task completes, check join_context and stop
+      
+      Do NOT do the work yourself. Only use spawn to delegate.
+    team: default
+    budget: 0.50
+    context:
+      repo: https://github.com/guan-spicy-wolf/yoitsu.git
+      init_branch: master
+      new_branch: true

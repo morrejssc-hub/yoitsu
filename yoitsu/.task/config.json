@@ -1,0 +1,44 @@
+{
+  "task": "根据CODE-SIMPLIFICATION-PLAN.md进行实施",
+  "workflow": "implement",
+  "phases": {
+    "design": {
+      "generate": {
+        "backend": "claude",
+        "prompt_template": "You are working in this repository. Based on the following requirements, generate an Architecture Decision Record (ADR) and a detailed implementation plan.\n\nRequirements:\n{context}\n\nOutput the ADR first, then the plan. Use markdown format."
+      },
+      "review": {
+        "backend": "codex",
+        "prompt_template": "Review the following design documents. Check for completeness, correctness, and feasibility. Start your response with APPROVE or REJECT on the first line.\n\n{artifact}"
+      },
+      "revise": {
+        "backend": "claude",
+        "prompt_template": "Revise the following design documents based on the review feedback.\n\nReview feedback:\n{review}\n\nOriginal documents:\n{artifact}"
+      }
+    },
+    "implement": {
+      "execute": {
+        "backend": "pi",
+        "prompt_template": "Implement the code according to the following plan. Read the plan carefully and implement all changes.\n\n{artifact}"
+      },
+      "review": {
+        "backend": "codex",
+        "prompt_template": "Review the code changes in this repository. Check for correctness, code quality, and adherence to the plan. Start your response with APPROVE or REJECT on the first line.\n\n{artifact}"
+      },
+      "revise": {
+        "backend": "pi",
+        "prompt_template": "Fix the code based on the following review feedback.\n\nReview feedback:\n{review}\n\nOriginal plan:\n{artifact}"
+      }
+    },
+    "final-review": {
+      "review": {
+        "backend": "claude",
+        "prompt_template": "Perform a final review of the entire implementation. Check that everything matches the original plan and ADR. Start your response with APPROVE or REJECT on the first line.\n\n{artifact}"
+      },
+      "revise": {
+        "backend": "pi",
+        "prompt_template": "Address the final review feedback by updating the implementation.\n\nFinal review feedback:\n{review}\n\nImplementation context:\n{artifact}"
+      }
+    }
+  }
+}

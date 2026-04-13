@@ -1,0 +1,73 @@
+pasloe_url: "http://127.0.0.1:8000"
+pasloe_api_key_env: "PASLOE_API_KEY"
+source_id: "trenni-supervisor"
+workspace_root: "/tmp/yoitsu-workspaces"
+
+runtime:
+  kind: "podman"
+  podman:
+    socket_uri: "unix:///run/podman/podman.sock"
+    pod_name: "yoitsu-dev"
+    image: "localhost/yoitsu-palimpsest-job:dev"
+    pull_policy: "never"
+    stop_grace_seconds: 10
+    cleanup_timeout_seconds: 120
+    retain_on_failure: false
+    git_token_env: "GITHUB_TOKEN"
+    env_allowlist:
+      - "OPENAI_API_KEY"
+      - "FACTORIO_RCON_HOST"
+      - "FACTORIO_RCON_PORT"
+      - "FACTORIO_RCON_PASSWORD"
+      - "FACTORIO_MOD_SCRIPTS_DIR"
+    labels:
+      io.yoitsu.managed-by: "trenni"
+      io.yoitsu.stack: "yoitsu"
+
+max_workers: 1
+poll_interval: 2.0
+
+bundles:
+  factorio:
+    source:
+      url: "https://github.com/guan-spicy-wolf/factorio-bundle.git"
+      selector: "evolve"
+    runtime:
+      env_allowlist:
+        - "OPENAI_API_KEY"
+        - "FACTORIO_RCON_HOST"
+        - "FACTORIO_RCON_PORT"
+        - "FACTORIO_RCON_PASSWORD"
+        - "FACTORIO_MOD_SCRIPTS_DIR"
+    scheduling:
+      max_concurrent_jobs: 1  # Serialize implementer writes to live bundle
+
+default_eventstore_source: "palimpsest-agent"
+
+default_llm:
+  model: "glm-5"
+  api_base: "https://coding.dashscope.aliyuncs.com/v1"
+  api_key_env: "OPENAI_API_KEY"
+  max_iterations: 30
+  max_iterations_hard: 60
+  max_tokens: 4096
+  temperature: 0.2
+  max_retries: 3
+  retry_initial_delay: 1.0
+  retry_max_delay: 60.0
+  retry_backoff_factor: 2.0
+
+default_workspace:
+  depth: 1
+
+default_publication:
+  strategy: "branch"
+  branch_prefix: "palimpsest/job"
+  max_recovery_attempts: 2
+
+api_host: "0.0.0.0"
+api_port: 8100
+
+webhook_secret: ""
+trenni_public_url: "http://127.0.0.1:8100"
+webhook_poll_interval: 30.0

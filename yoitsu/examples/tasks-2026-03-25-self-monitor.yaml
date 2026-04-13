@@ -1,0 +1,18 @@
+tasks:
+  - goal: >-
+      Monitor the running Yoitsu stack from inside the runtime as an operations
+      task. This is not a repository coding task. Use bash and the injected
+      PASLOE_API_KEY to query:
+      1) http://127.0.0.1:8100/control/status
+      2) http://127.0.0.1:8000/events/stats
+      3) the latest agent.job.failed, supervisor.task.failed, supervisor.job.launched,
+         agent.job.started, and agent.job.completed events from Pasloe.
+      Determine the current health of the stack, identify the top failure mode
+      if any, and say whether the system is blocked by infrastructure,
+      orchestration, or task-level issues. Do not change remotes, do not try to
+      push commits, and do not edit production code. If you need scratch notes,
+      keep them local to the temporary workspace. Finish with a concise
+      structured summary and operator recommendation, then stop calling tools.
+    role: default
+    repo: ""
+    init_branch: main

@@ -1,0 +1,29 @@
+# Claude Code local settings (may contain credentials)
+.claude/
+
+# Component repositories (each managed independently)
+yoitsu-contracts/
+palimpsest/
+pasloe/
+trenni/
+
+# Runtime directories
+trenni-work/
+
+# Logs & runtime state
+*.log
+monitor-state.json
+monitor-*.out
+test-report-*.md
+.pids.json
+.yoitsu.lock
+deploy/quadlet/*.env
+.uv-cache/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Test outputs
+test-runs/

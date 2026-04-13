@@ -1,0 +1,45 @@
+tasks:
+  - goal: >-
+      This is a mandatory spawn-mode smoke test. Do not complete this task in a
+      single planner job.
+
+      You must use `spawn` exactly once to create exactly two child tasks, both
+      with role `implementer`.
+
+      Child A:
+      - create `smoke/SMOKE.txt`
+      - the file content must be exactly one line: `smoke: ok`
+      - no trailing whitespace
+      - do not modify any other file
+
+      Child B:
+      - stage and commit only `smoke/SMOKE.txt`
+      - use an appropriate commit message
+      - do not include any other file in the commit
+
+      Requirements for both spawned child tasks:
+      - include `role`
+      - include `goal`
+      - include `budget`
+      - include `repo`
+      - include `init_branch`
+      - include `eval_spec.deliverables`
+      - include `eval_spec.criteria`
+
+      Join/continuation rules:
+      - after child tasks finish, first inspect `join_context`
+      - if both child tasks are already complete, do not spawn more tasks
+      - do not recreate or repeat already completed work
+      - stop naturally once the parent task is satisfied
+
+      Success condition:
+      - the parent task reaches terminal state
+      - there is at least one child task for file creation
+      - there is at least one child task for commit
+      - no duplicate follow-up tasks are spawned after both required child tasks succeed
+    team: default
+    budget: 0.80
+    repo: https://github.com/guan-spicy-wolf/yoitsu.git
+    init_branch: master
+    params:
+      new_branch: true

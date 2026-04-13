@@ -1,0 +1,177 @@
+tasks:
+  - goal: >-
+      Stabilize the Quadlet-side Pasloe health path. Investigate why the
+      current local deployment can keep serving requests while Podman marks
+      `yoitsu-pasloe` unhealthy, then harden the wrapper, healthcheck script,
+      startup sequencing, and operator-facing docs so the local Quadlet deploy
+      reports health accurately during long polling.
+    context:
+      role: default
+      repo: https://github.com/guan-spicy-wolf/yoitsu.git
+      init_branch: master
+      priority: P0
+      source_docs:
+        - deploy/quadlet/README.md
+        - deploy/quadlet/yoitsu-pasloe.container
+        - docs/superpowers/plans/2026-03-24-yoitsu-next-steps.md
+      repo_scope:
+        - deploy/quadlet
+        - scripts/deploy-quadlet.sh
+        - scripts/quadlet-status.sh
+        - README.md
+      acceptance_criteria:
+        - Quadlet health and startup behavior are documented from the operator point of view.
+        - The local deployment no longer reports a false unhealthy state during normal service polling.
+        - Status output makes the failure mode easy to diagnose without reading source code.
+
+  - goal: >-
+      Make Pasloe's `/health` endpoint cheap and deterministic for the Quadlet
+      deployment. Treat the current unhealthy signal as a real bug until proven
+      otherwise: reproduce it, harden the endpoint or surrounding app behavior,
+      and add regression coverage so normal event polling and startup work do
+      not cause health flaps.
+    context:
+      role: default
+      repo: https://github.com/guan-spicy-wolf/pasloe.git
+      init_branch: master
+      priority: P0
+      source_docs:
+        - docs/superpowers/specs/2026-03-16-pasloe-refactor-design.md
+        - tests/test_api.py
+      repo_scope:
+        - src/pasloe
+        - tests
+      acceptance_criteria:
+        - "`/health` stays fast and deterministic while the service is processing normal traffic."
+        - Automated coverage exists for the chosen failure mode or fix path.
+        - The fix does not regress the existing event append/query behavior.
+
+  - goal: >-
+      Define the shared contracts for the next Yoitsu stage: structured child
+      outputs, graph node and edge inspection, and approval-gate events. The
+      contract surface should support the roadmap in `Yoitsu Next Steps`
+      without reintroducing the old overloaded task status model.
+    context:
+      role: default
+      repo: https://github.com/guan-spicy-wolf/yoitsu-contracts.git
+      init_branch: master
+      priority: P1
+      source_docs:
+        - /home/holo/yoitsu/docs/adr/0002-task-orchestration-decoupling.md
+        - /home/holo/yoitsu/docs/superpowers/plans/2026-03-24-yoitsu-next-steps.md
+      repo_scope:
+        - src/yoitsu_contracts
+        - tests
+      acceptance_criteria:
+        - Contracts cover structured child results without reviving `task.updated`.
+        - Contracts cover graph inspection and approval events needed for reviewable workflows.
+        - Serialization, validation, and compatibility tests exist for new schemas.
+
+  - goal: >-
+      Turn fan-out into a first-class graph in Trenni. Persist a queryable
+      projection of task/job nodes and edges, record normalized child outputs,
+      and expose the minimum inspection surface needed for operators and parent
+      continuations to understand graph state without replaying raw events by
+      hand.
+    context:
+      role: default
+      repo: https://github.com/guan-spicy-wolf/trenni.git
+      init_branch: master
+      priority: P1
+      source_docs:
+        - /home/holo/yoitsu/docs/superpowers/plans/2026-03-24-yoitsu-next-steps.md
+        - /home/holo/yoitsu/docs/superpowers/specs/2026-03-24-architecture-redesign.md
+      repo_scope:
+        - trenni
+        - tests
+      acceptance_criteria:
+        - Task/job graph state can be queried without custom ad hoc event stitching.
+        - Structured child outputs are persisted in a way parent continuations can consume.
+        - Replay and checkpoint flows keep the projection consistent.
+
+  - goal: >-
+      Finish Trenni's failure recovery and operator controls for graph-native
+      execution. Ensure `runtime_lost` and replay/missing-container paths always
+      converge task state correctly, then add graph-node retry/replay controls
+      with tests so an operator can safely resume work from a failed branch.
+    context:
+      role: default
+      repo: https://github.com/guan-spicy-wolf/trenni.git
+      init_branch: master
+      priority: P1
+      source_docs:
+        - /home/holo/yoitsu/docs/reviews/2026-03-25-adr-0002-review.md
+        - /home/holo/yoitsu/docs/superpowers/specs/2026-03-23-podman-job-runtime-design.md
+      repo_scope:
+        - trenni
+        - tests
+      acceptance_criteria:
+        - Missing-container and `runtime_lost` cases always emit a terminal task outcome when appropriate.
+        - Retry/replay controls are explicit and safe for operators to invoke.
+        - Tests cover replay, checkpoint, and restart behavior for the new control flow.
+
+  - goal: >-
+      Make Palimpsest produce structured results that a parent job and human
+      reviewer can actually use. Emit a normalized completion artifact for each
+      job and add publication modes for `branch_only`, `pr_draft`, and
+      `approval_required` so runtime output matches the trust model described in
+      the roadmap.
+    context:
+      role: default
+      repo: https://github.com/guan-spicy-wolf/palimpsest.git
+      init_branch: master
+      priority: P1
+      source_docs:
+        - /home/holo/yoitsu/docs/superpowers/plans/2026-03-24-yoitsu-next-steps.md
+        - docs/design.md
+      repo_scope:
+        - palimpsest
+        - tests
+      acceptance_criteria:
+        - Job completion emits a normalized structured result artifact, not just a loose summary.
+        - Publication modes support branch-only, draft PR, and approval-required flows.
+        - Existing completion and publication behavior remains test-covered.
+
+  - goal: >-
+      Upgrade the umbrella repo's CLI and monitoring surface for graph-native
+      operations. Add commands and reports for graph inspection, review queue
+      visibility, and graph-node retry/replay so operators can manage the local
+      Quadlet stack without manually stitching together journals and raw event
+      streams.
+    context:
+      role: default
+      repo: https://github.com/guan-spicy-wolf/yoitsu.git
+      init_branch: master
+      priority: P2
+      source_docs:
+        - docs/architecture.md
+        - docs/superpowers/plans/2026-03-24-yoitsu-next-steps.md
+      repo_scope:
+        - yoitsu
+        - scripts/monitor.py
+        - tests
+      acceptance_criteria:
+        - Operators can inspect graph state and review backlog from the repo CLI or monitor script.
+        - Retry/replay flows are exposed through documented commands, not hidden implementation details.
+        - Monitoring output stays aligned with the new task/job graph model.
+
+  - goal: >-
+      Turn evo into a measured loop in the umbrella repo. Build a benchmark
+      harness and scorecard for success rate, token cost, elapsed runtime, and
+      publication quality, then define a promotion gate so self-improvement
+      changes only land when they beat the baseline with evidence.
+    context:
+      role: default
+      repo: https://github.com/guan-spicy-wolf/yoitsu.git
+      init_branch: master
+      priority: P2
+      source_docs:
+        - docs/superpowers/plans/2026-03-24-yoitsu-next-steps.md
+      repo_scope:
+        - scripts
+        - docs
+        - tests
+      acceptance_criteria:
+        - There is a repeatable benchmark entrypoint with persisted results.
+        - The scorecard tracks quality, speed, and cost, not just pass/fail.
+        - Promotion rules are explicit enough that evo changes can be accepted or rejected on evidence.

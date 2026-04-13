@@ -1,0 +1,53 @@
+pasloe_url: "http://localhost:8000"
+pasloe_api_key_env: "PASLOE_API_KEY"
+source_id: "trenni-supervisor"
+workspace_root: "/tmp/yoitsu-workspaces"
+
+runtime:
+  kind: "podman"
+  podman:
+    socket_uri: ""
+    pod_name: "yoitsu-dev"
+    image: "localhost/yoitsu-palimpsest-job:dev"
+    pull_policy: "never"
+    stop_grace_seconds: 10
+    cleanup_timeout_seconds: 120
+    retain_on_failure: false
+    git_token_env: "GITHUB_TOKEN"
+    env_allowlist:
+      - "OPENAI_API_KEY"
+    labels:
+      io.yoitsu.managed-by: "trenni"
+      io.yoitsu.stack: "yoitsu"
+
+max_workers: 4
+poll_interval: 2.0
+
+bundles:
+  factorio:
+    source:
+      url: "https://github.com/guan-spicy-wolf/factorio-bundle.git"
+      selector: "evolve"  # Branch to track for evolution
+    default_role: "planner"  # Entry role for external triggers
+    scheduling:
+      max_concurrent_jobs: 1  # Serialize implementer writes to live bundle
+
+default_llm:
+  model: "kimi-k2.5"
+  api_base: "https://coding.dashscope.aliyuncs.com/v1"
+  api_key_env: "OPENAI_API_KEY"
+  max_iterations: 30
+  max_tokens: 4096
+  temperature: 0.2
+  max_retries: 3
+  retry_initial_delay: 1.0
+  retry_max_delay: 60.0
+  retry_backoff_factor: 2.0
+
+default_workspace:
+  depth: 1
+
+default_publication:
+  strategy: "branch"
+  branch_prefix: "palimpsest/job"
+  max_recovery_attempts: 2

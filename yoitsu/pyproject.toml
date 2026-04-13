@@ -1,0 +1,34 @@
+[project]
+name = "yoitsu"
+version = "0.1.0"
+description = "Yoitsu stack CLI"
+requires-python = ">=3.11"
+dependencies = [
+    "click>=8.0",
+    "httpx>=0.27",
+    "pyyaml>=6.0",
+    "textual>=0.70",
+    "yoitsu-contracts",
+]
+
+[project.scripts]
+yoitsu = "yoitsu.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0",
+    "pytest-asyncio>=0.23",
+]
+
+[tool.uv]
+package = true
+
+[tool.uv.sources]
+yoitsu-contracts = { path = "yoitsu-contracts", editable = true }
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

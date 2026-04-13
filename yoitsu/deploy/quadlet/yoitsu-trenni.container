@@ -1,0 +1,46 @@
+[Unit]
+Description=Yoitsu Trenni
+After=yoitsu-pasloe.service podman.socket
+Requires=yoitsu-pasloe.service podman.socket
+
+[Container]
+ContainerName=yoitsu-trenni
+Image=localhost/yoitsu-python-base:dev
+Pull=newer
+Pod=yoitsu.pod
+StartWithPod=true
+Environment=TRENNI_SRC_ROOT=/workspace/trenni
+Environment=YOITSU_CONTRACTS_SRC_ROOT=/workspace/yoitsu-contracts
+Environment=YOITSU_STATE_DIR=/var/lib/yoitsu
+Environment=HOME=/var/lib/yoitsu/home
+Environment=PODMAN_HOST=unix:///run/podman/podman.sock
+EnvironmentFile=%h/.config/containers/systemd/yoitsu/trenni.env
+Volume=%h/yoitsu/trenni:/workspace/trenni:ro,Z
+Volume=%h/yoitsu/yoitsu-contracts:/workspace/yoitsu-contracts:ro,Z
+Volume=%h/yoitsu/pasloe:/workspace/pasloe:ro,Z
+Volume=%h/yoitsu/palimpsest/evo:/workspace/evo:ro,Z
+Volume=/tmp/yoitsu-workspaces:/tmp/yoitsu-workspaces:Z
+Volume=%t/podman/podman.sock:/run/podman/podman.sock
+Volume=yoitsu-dev-state.volume:/var/lib/yoitsu
+Volume=%h/.config/containers/systemd/yoitsu/bin:/opt/yoitsu/bin:ro,Z
+Volume=%h/.config/containers/systemd/yoitsu/trenni.dev.yaml:/etc/yoitsu/trenni.yaml:ro,Z
+Exec=/bin/sh /opt/yoitsu/bin/start-trenni.sh
+HealthCmd=/bin/sh /opt/yoitsu/bin/health-trenni.sh
+HealthStartupCmd=/bin/sh /opt/yoitsu/bin/health-trenni.sh
+HealthInterval=30s
+HealthTimeout=5s
+HealthRetries=3
+HealthStartupInterval=10s
+HealthStartupRetries=30
+NoNewPrivileges=true
+SecurityLabelDisable=true
+Notify=healthy
+LogDriver=journald
+
+[Service]
+Restart=always
+RestartSec=10
+TimeoutStartSec=900
+
+[Install]
+WantedBy=default.target

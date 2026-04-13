@@ -1,0 +1,32 @@
+> **⚠️ Superseded by [ADR-0015](0015-bundle-as-repo.md)**  
+> ADR-0015 replaces the unified Artifact Store with URI scheme-based external references. Git becomes the native backend for code-like artifacts instead of a "compatibility receipt". The Blob/Tree model and ArtifactRef/ArtifactBinding abstraction described here are no longer the architecture direction.
+
+# 0013: 产物物理存储层 (Artifact Store) 对接准则
+
+## 1. 现状与存在的问题
+当前系统的绝大多数生命周期设计极度依赖单一输出渠道：通过将操作结果打包写入以 `git_ref` 标识的分支推送之中。存在三大痛点：
+1. **非原生 Git 任务缺失出口**：如产生统计报告、日志合集或巨型游戏状态（Factorio 快照）的任务根本没有标准的保存介质，极易丢失。
+2. **工作区身份错乱**：即是“运行平台”也是“交付载体”。一旦容器异常被杀，介于操作中和提交推送中间的数据面临绝收。
+3. **事件信息流冗余过载**：过度使用记录事件流系统 Pasloe 来传递庞大 JSON 元数据，甚至混有大量执行轨迹，容易违背事件本身需要保持微型快速触发响应的设计初衷，混淆了系统底层认知：到底哪里存放逻辑进程，哪里存放真正的大块交付物。
+
+## 2. 做出的决策与原因
+**决策**：引入“双数据真相源”理念中代表物质积累实体的组件——基于唯一内容寻址不可修改特性的 Artifact Store 作为所有中间和最终物件的最强落地仓库。
+1. **统一基础分类**：第一版强行推导定义一切只存在 `Blob`（不可变单字节切片文件）与 `Tree`（高度约束标准化的扁平目录环境）实体。这不仅能容纳 Git 树结构，一样能容纳外部压缩包的直接存留。
+2. **解除绑定强加抽象**：将产出物纯物理地址 `ArtifactRef` 与它当前在本次任务里是作为“只读资料”、“编译文件”还是“结果快照”的语义包装结构体 `ArtifactBinding` 进行脱钩处理。
+3. **安全拷入/拷出 (Copy-in / Copy-out)**：Job 从库中复制数据以构建临时沙盒，结束时重新交予系统存库产生全新的摘要标记。从物理上斩断修改历史数据的任何可能性。
+**原因**：为了支持完全并行的节点弹性扩展与重试行为的安全无损，任何尝试复用缓存工作区的做法都是系统崩溃与隐晦 Bug 的策源地。内容寻址在设计基础上即封杀了冲突争夺战。
+
+## 3. 期望达到的结果
+- 解除与强中心化版本控制（Git）之间绝对绑定的关系；Git 从系统运行核心地位退化下降为“其中一种发布时的外部技术收据手段（Compatibility Receipt）”。
+- 实现极其安全的并发产物回吐能力与状态机状态的原子性转移操作保障。
+
+## 4. 容易混淆的概念
+- **引用 (ArtifactRef) vs 实体关联带语义 (ArtifactBinding)**
+  - `ArtifactRef` 纯粹到仅仅等于它的存放位置（或者内容计算出的 SHA256 等摘要序列号），该地址永不携带含义并允许一切实体交叉指向它以节省内存。
+  - `ArtifactBinding` 附加有事件描述记录字符串诸如 `relation: "workspace_root"` 或 `relation: "evaluator_report"` 的外层标签，用于给不同执行器认知它的上下文提供依据。
+- **容器环境内沙盒 (Workspace) vs 不可更变实体 (Artifact)**
+  - 在运行时可以随意篡改、破坏以及存在权限重叠等混乱场面的叫 Workspace；
+  - 任务停止被确认打包吸入进系统库，即不可逆、无法删除只等时间序列演进沉淀的内容叫 Artifact。
+
+## 5. 对之前 ADR 或文档的修正说明
+

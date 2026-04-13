@@ -1,0 +1,156 @@
+# Yoitsu
+
+Yoitsu is the umbrella repo for a four-repo agent stack:
+
+- `pasloe` stores the append-only event stream.
+- `trenni` schedules jobs, evaluates spawn conditions, and owns isolation.
+- `palimpsest` runs one job at a time inside the chosen isolation backend.
+- `yoitsu-contracts` defines the shared event, config, condition, and client contracts.
+
+The current architecture is documented in [docs/architecture.md](docs/architecture.md). Key architecture decisions are recorded in [docs/adr/](docs/adr/).
+
+## Repositories
+
+| Repository | Path | Role |
+|---|---|---|
+| [yoitsu-contracts](https://github.com/guan-spicy-wolf/yoitsu-contracts) | `yoitsu-contracts/` | Shared contracts and Pasloe clients |
+| [palimpsest](https://github.com/guan-spicy-wolf/palimpsest) | `palimpsest/` | Runtime for a single job execution |
+| [trenni](https://github.com/guan-spicy-wolf/trenni) | `trenni/` | Scheduler, spawn expansion, replay, checkpointing |
+| [pasloe](https://github.com/guan-spicy-wolf/pasloe) | `pasloe/` | Schema-agnostic event store |
+
+## Architecture Summary
+
+- **Event Store is the sole causal authority.** It answers "who declared what, when" — not "where is that thing now". Content availability is delegated to URI-scheme-specific backends (git, filesystem, HTTP).
+- `Job` and `Task` are separate. A job only succeeds or fails. A task is implicitly active until Trenni emits a terminal event: `task.completed`, `task.failed`, or `task.cancelled`.
+- `spawn()` is the only orchestration primitive. Trenni expands it into child jobs plus a conditional join job.
+- **Each bundle is an independent git repository** with roles, tools, contexts, capabilities, and observations.
+- **Runtime runs a 4-stage pipeline**: preparation (capability setup) → context (LLM context assembly) → agent loop (LLM + tools) → finalization (capability finalize + event emission).
+- **Capabilities** manage runtime services (setup/finalize lifecycle). They return event data; runtime emits on their behalf.
+- **Observation analyzers** run post-hoc in Trenni after job completion, using a unified interface for both default and bundle-provided analyzers.
+- Isolation is a protocol. `PodmanBackend` is the current implementation.
+- Shared wire contracts live in `yoitsu-contracts`, not as duplicated ad hoc dict parsing in each repo.
+
+## Quick Start
+
+Prerequisites:
+
+- Python 3.11+
+- `uv`
+- Podman if you want to run real isolated jobs
+- `PASLOE_API_KEY`
+- an LLM API key such as `OPENAI_API_KEY`
+
+Setup:
+
+```bash
+./scripts/setup.sh
+uv sync
+
+export PASLOE_API_KEY=yoitsu-test-key-2026
+export OPENAI_API_KEY=<your-api-key>
+```
+
+Start the stack:
+
+```bash
+uv run yoitsu up
+```
+
+Submit tasks:
+
+```bash
+uv run yoitsu submit examples/tasks.yaml
+```
+
+Inspect status and logs:
+
+```bash
+uv run yoitsu status
+uv run yoitsu logs --service trenni --lines 50
+uv run yoitsu logs --service pasloe --lines 50
+uv run yoitsu watch --hours 5
+```
+
+Pause or resume scheduling:
+
+```bash
+uv run yoitsu pause
+uv run yoitsu resume
+```
+
+Stop the stack:
+
+```bash
+uv run yoitsu down
+```
+
+## Task Submission
+
+Yoitsu CLI accepts a YAML task list with canonical fields. Trenni assigns a `task_id` when one is not provided.
+
+```yaml
+tasks:
+  - goal: "Add unit tests for the user authentication module"
+    role: "default"
+    repo: "https://github.com/your-org/your-repo.git"
+
+  - goal: "Investigate flaky publication guardrails"
+    role: "default"
+    repo: "https://github.com/your-org/your-repo.git"
+```
+
+**Canonical fields**: `goal` (required), `role`, `budget`, `repo`, `init_branch`, `params`, `eval_spec`, `sha`, `input_artifacts`.
+
+**Legacy fields rejected**: `task`, `repo_url`, `branch`, `prompt`, `context`.
+
+## Configuration
+
+`config/trenni.yaml` configures scheduling, isolation, and default job settings.
+
+```yaml
+pasloe_url: "http://localhost:8000"
+pasloe_api_key_env: "PASLOE_API_KEY"
+source_id: "trenni-supervisor"
+
+runtime:
+  kind: "podman"
+  podman:
+    socket_uri: "unix:///run/podman/podman.sock"
+    pod_name: "yoitsu-dev"
+    image: "localhost/yoitsu-palimpsest-job:dev"
+    pull_policy: "never"
+    git_token_env: "GITHUB_TOKEN"
+    env_allowlist:
+      - "OPENAI_API_KEY"
+
+max_workers: 4
+poll_interval: 2.0
+
+bundles:
+  default: {}  # Fallback bundle
+  factorio:
+    source:
+      url: "git+file:///path/to/factorio-bundle.git"
+      selector: "evolve"
+    scheduling:
+      max_concurrent_jobs: 1
+
+default_llm:
+  model: "kimi-k2.5"
+  api_base: "https://coding.dashscope.aliyuncs.com/v1"
+  api_key_env: "OPENAI_API_KEY"
+  max_iterations: 30
+  temperature: 0.2
+```
+
+## Quadlet Deployment
+
+For the current rootless Podman + Quadlet development deployment:
+
+```bash
+./scripts/build-job-image.sh
+./scripts/deploy-quadlet.sh
+systemctl --user status yoitsu-pod.service yoitsu-pasloe.service yoitsu-trenni.service
+```
+
+The deployment model is documented in [deploy/quadlet/README.md](deploy/quadlet/README.md).

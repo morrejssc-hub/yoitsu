@@ -1,0 +1,1 @@
+"""Factorio bundle — self-contained evolution subtree."""

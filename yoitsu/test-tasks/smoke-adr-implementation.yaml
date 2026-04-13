@@ -1,0 +1,16 @@
+# Smoke test for ADR-0004/0008/0009/0010 implementation
+# Tests: basic job execution, preparation_fn, budget tracking, observation events
+
+tasks:
+  - goal: |
+      Create a file smoke/SMOKE-ADR-IMPL-{timestamp}.txt with exactly one line:
+      "ADR-0004/0008/0009/0010 implementation verified on {timestamp}"
+      Replace {timestamp} with current timestamp in format YYYYMMDD-HHMMSS.
+      No trailing whitespace or newline.
+      Do not modify any other file.
+    team: default
+    budget: 0.25
+    context:
+      repo: https://github.com/guan-spicy-wolf/yoitsu.git
+      init_branch: master
+      new_branch: true

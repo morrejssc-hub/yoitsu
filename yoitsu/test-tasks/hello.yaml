@@ -1,0 +1,5 @@
+tasks:
+  - goal: "Echo hello world"
+    role: "worker"
+    bundle: "factorio"
+    budget: 0.1
