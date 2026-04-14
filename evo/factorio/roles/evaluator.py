@@ -1,5 +1,9 @@
 """Evaluator role: validates implementer output.
 
+Per ADR-0019: output_authority="analysis" — read-only, no authoritative output.
+Per ADR-0018: uses capability-only lifecycle (needs=[]).
+Runner provides ephemeral workspace; scripts are accessed via absolute bundle_workspace path.
+
 Verifies:
 1. Expected files exist in factorio/scripts/
 2. Lua syntax is valid (via luac or Factorio load())
@@ -10,26 +14,12 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from palimpsest.config import WorkspaceConfig
 from palimpsest.runtime.roles import JobSpec, context_spec, role
-
-
-def evaluator_preparation(*, evo_root: str, **kwargs) -> WorkspaceConfig:
-    """Evaluator uses workspace override to check files."""
-    return WorkspaceConfig(repo="", new_branch=False, workspace_override=evo_root)
-
-
-def evaluator_publication(**kwargs) -> tuple[None, list]:
-    """Evaluator doesn't produce artifacts."""
-    return None, []
-
-
-evaluator_publication.__publication_strategy__ = "skip"
 
 
 def evaluate_lua_syntax(script_path: Path) -> tuple[bool, str]:
     """Check Lua syntax using luac.
-    
+
     Returns:
         (is_valid, error_message)
     """
@@ -44,7 +34,6 @@ def evaluate_lua_syntax(script_path: Path) -> tuple[bool, str]:
             return True, ""
         return False, result.stderr
     except FileNotFoundError:
-        # luac not available, skip syntax check
         return True, "luac not available, syntax check skipped"
     except Exception as e:
         return False, str(e)
@@ -52,24 +41,21 @@ def evaluate_lua_syntax(script_path: Path) -> tuple[bool, str]:
 
 def check_dynamic_constraint(script_path: Path) -> tuple[bool, str]:
     """Check if script follows DYNAMIC constraint.
-    
+
     Returns:
         (is_valid, error_message)
     """
     content = script_path.read_text()
-    
-    # Must have DYNAMIC marker
+
     if "-- DYNAMIC" not in content:
         return False, "Missing -- DYNAMIC marker"
-    
-    # Must be a function returning function
+
     if "return function(" not in content:
         return False, "Must be 'return function(args_str) ... end' pattern"
-    
-    # Should NOT use require (dynamic scripts can't require modules)
+
     if "require(" in content or "require '" in content or 'require "' in content:
         return False, "Dynamic scripts cannot use require()"
-    
+
     return True, ""
 
 
@@ -80,18 +66,22 @@ def check_dynamic_constraint(script_path: Path) -> tuple[bool, str]:
     min_cost=0.1,
     recommended_cost=0.3,
     max_cost=0.5,
+    needs=[],
+    output_authority="analysis",
 )
 def evaluator(**params) -> JobSpec:
     """Evaluate implementer output.
-    
-    The goal and expected files are passed via role_params.
+
+    Per ADR-0018/0019:
+    - output_authority="analysis": read-only checks, no new authoritative output
+    - needs=[]: no capability setup/finalize required
+    - Runner provides ephemeral workspace; agent uses absolute paths to bundle scripts
+    - The goal and expected files are passed via role_params
     """
     return JobSpec(
-        preparation_fn=evaluator_preparation,
         context_fn=context_spec(
             system="factorio/prompts/evaluator.md",
             sections=[],
         ),
-        publication_fn=evaluator_publication,
         tools=["bash"],
     )
