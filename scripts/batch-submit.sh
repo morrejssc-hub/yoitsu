@@ -6,6 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(dirname "$SCRIPT_DIR")"
+CLI_PROJECT="${YOITSU_CLI_PROJECT:-$ROOT}"
 
 TASKS_DIR="${1:-$ROOT/test-tasks}"
 INTERVAL="${INTERVAL:-300}"  # 5 minutes between submissions
@@ -70,7 +71,7 @@ for task_file in $task_files; do
     echo "[batch-submit] Submitting: $task_file"
     
     # Submit task
-    result="$(uv run yoitsu submit "$task_file" 2>&1)"
+    result="$(uv run --project "$CLI_PROJECT" yoitsu submit "$task_file" 2>&1)"
     
     # Check result
     submitted_count="$(python3 -c 'import json,sys; d=json.loads(sys.stdin.read().strip().split("\n")[-1]); print(d.get("submitted",0))' <<<"$result" 2>/dev/null || echo 0)"

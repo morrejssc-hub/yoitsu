@@ -6,6 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(dirname "$SCRIPT_DIR")"
+CLI_PROJECT="${YOITSU_CLI_PROJECT:-$ROOT}"
 
 VERBOSE="${1:-}"
 [[ "$VERBOSE" == "--verbose" ]] || VERBOSE=""
@@ -131,7 +132,7 @@ echo "[health] Summary: $errors errors, $warnings warnings"
 if [[ "$VERBOSE" == "--verbose" ]]; then
     echo ""
     echo "[health] Detailed status:"
-    uv run yoitsu status 2>/dev/null | python3 -m json.tool || true
+    uv run --project "$CLI_PROJECT" yoitsu status 2>/dev/null | python3 -m json.tool || true
 fi
 
 if [[ "$errors" -gt 0 ]]; then

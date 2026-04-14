@@ -1,7 +1,23 @@
 # 0019: Role Output Authority
 
-- Status: Proposed
+- Status: Suspended (2026-04-14)
+- Superseded by: ADR-0021
 - Related: ADR-0015, ADR-0016
+
+> **Suspended note (2026-04-14)**
+>
+> 本 ADR 的表述把 "role 的输出权威归属" 与 "runner 的工作区路由" 绑在同一个字段上，
+> 与 "event store 是唯一真实来源"（见 ADR-0020）在概念上冲突。实现上 `output_authority`
+> 只影响 runner 选择 cwd，并不承担真值模型职责。
+>
+> 该问题在 ADR-0021 中以 "capability surface（装饰器）+ bundle trust ref（git）" 的正交
+> 二分重新解决：执行表面由 surface 决定，信任边界由 ref 决定，真值仍由事件独占承担。
+>
+> 本 ADR 暂停生效：`output_authority` 字段在 role metadata 中保留但不再承载语义，
+> 工作区路由与控制面准备改由 ADR-0021 的机制承接。下列原文仅作为讨论背景保留，
+> 不再作为架构决策被引用。
+
+---
 
 ## 1. 现状与存在的问题
 

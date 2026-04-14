@@ -29,6 +29,9 @@ yoitsu-contracts = { path = "yoitsu-contracts", editable = true }
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 
+[tool.hatch.build.targets.wheel]
+packages = ["yoitsu/yoitsu"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

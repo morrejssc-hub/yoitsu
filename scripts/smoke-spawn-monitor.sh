@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+CLI_PROJECT="${YOITSU_CLI_PROJECT:-$ROOT_DIR}"
 
 PASLOE_URL="${YOITSU_PASLOE_URL:-http://127.0.0.1:8000}"
 TRENNI_URL="${YOITSU_TRENNI_URL:-http://127.0.0.1:8100}"
@@ -87,6 +88,17 @@ if [[ -z "$BUNDLE" ]]; then
   exit 1
 fi
 
+if [[ ! -f "$CLI_PROJECT/pyproject.toml" ]]; then
+  echo "[smoke] yoitsu CLI project not found: $CLI_PROJECT" >&2
+  exit 1
+fi
+
+if [[ "$BUNDLE" == "factorio" && "$GOAL" == *"create a new file smoke/SMOKE.txt"* ]]; then
+  echo "[smoke] default smoke goal targets repository-authoring work, but bundle 'factorio' only supports live Factorio bundle tasks" >&2
+  echo "[smoke] provide a factorio-specific GOAL or run the smoke against a repository-authoring bundle" >&2
+  exit 1
+fi
+
 export BUNDLE ROLE BUDGET GOAL REPO BRANCH ROOT_REPO_CONTEXT
 
 if [[ -z "${PASLOE_API_KEY:-}" ]]; then
@@ -130,8 +142,7 @@ fi
 
 echo "[smoke] status snapshot"
 (
-  cd "$ROOT_DIR"
-  uv run yoitsu status
+  uv run --project "$CLI_PROJECT" yoitsu status
 )
 
 status_json="$(
@@ -202,8 +213,7 @@ trap cleanup EXIT
 if [[ "$TAIL_ENABLED" == "1" ]]; then
   echo "[smoke] starting task-scoped events tail"
   (
-    cd "$ROOT_DIR"
-    uv run yoitsu events --task "$task_id" --source "$TAIL_SOURCE" tail
+    uv run --project "$CLI_PROJECT" yoitsu events --task "$task_id" --source "$TAIL_SOURCE" tail
   ) &
   tail_pid="$!"
   sleep 1
@@ -211,23 +221,20 @@ fi
 
 echo "[smoke] initial chain"
 (
-  cd "$ROOT_DIR"
-  uv run yoitsu tasks chain "$task_id"
+  uv run --project "$CLI_PROJECT" yoitsu tasks chain "$task_id"
 )
 
 echo "[smoke] waiting for terminal state"
 set +e
 (
-  cd "$ROOT_DIR"
-  uv run yoitsu tasks --timeout "$TASK_TIMEOUT" --interval "$TASK_INTERVAL" wait "$task_id"
+  uv run --project "$CLI_PROJECT" yoitsu tasks --timeout "$TASK_TIMEOUT" --interval "$TASK_INTERVAL" wait "$task_id"
 )
 wait_rc=$?
 set -e
 
 echo "[smoke] final chain"
 (
-  cd "$ROOT_DIR"
-  uv run yoitsu tasks chain "$task_id"
+  uv run --project "$CLI_PROJECT" yoitsu tasks chain "$task_id"
 )
 
 echo "[smoke] wait exit code=${wait_rc}"

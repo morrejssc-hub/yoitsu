@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+CLI_PROJECT="${YOITSU_CLI_PROJECT:-$ROOT_DIR}"
 cd "$ROOT_DIR"
 
 INTERVAL="${INTERVAL:-10}"
@@ -22,7 +23,7 @@ while true; do
     echo "=== $(date '+%H:%M:%S') ==="
 
     # Status summary
-    status_json="$(uv run yoitsu status 2>/dev/null || echo '{}')"
+    status_json="$(uv run --project "$CLI_PROJECT" yoitsu status 2>/dev/null || echo '{}')"
     paused="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("trenni",{}).get("paused",False))' <<<"$status_json")"
     running="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("trenni",{}).get("running_jobs",0))' <<<"$status_json")"
     pending="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("trenni",{}).get("pending_jobs",0))' <<<"$status_json")"
@@ -47,7 +48,7 @@ while true; do
 
     # Task chain for smoke test root
     echo ""
-    uv run yoitsu tasks chain 069dcd2647ad762a 2>/dev/null | head -20 || echo "  (chain unavailable)"
+    uv run --project "$CLI_PROJECT" yoitsu tasks chain 069dcd2647ad762a 2>/dev/null | head -20 || echo "  (chain unavailable)"
 
     # Running containers
     echo ""

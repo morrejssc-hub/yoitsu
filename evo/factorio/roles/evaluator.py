@@ -1,8 +1,9 @@
 """Evaluator role: validates implementer output.
 
-Per ADR-0019: output_authority="analysis" — read-only, no authoritative output.
-Per ADR-0018: uses capability-only lifecycle (needs=[]).
-Runner provides ephemeral workspace; scripts are accessed via absolute bundle_workspace path.
+Per ADR-0021:
+- needs=[]: read-only analysis, no capability required
+- Uses bundle_workspace (RO) for script inspection
+- Runner provides ephemeral workspace; scripts accessed via absolute paths
 
 Verifies:
 1. Expected files exist in factorio/scripts/

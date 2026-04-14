@@ -1,10 +1,11 @@
 """Factorio runtime capability.
 
-Handles Factorio-specific runtime lifecycle per ADR-0018/ADR-0019:
+Handles Factorio-specific runtime lifecycle per ADR-0018/ADR-0021:
 - setup: sync bundle scripts to live mod dir + connect RCON
 - finalize: close RCON connection
 
-Used by the worker role (output_authority="live_runtime", needs=["factorio_runtime"]).
+Per ADR-0021: surface="job_side" — runs in Palimpsest job container.
+Used by the worker role (needs=["factorio_runtime", "factorio_mount"]).
 """
 
 from __future__ import annotations
@@ -26,9 +27,12 @@ class FactorioRuntimeCapability:
     - Establishes and stores RCON connection in ctx.resources["rcon"]
     - Reloads mod scripts after sync
     - Closes RCON on finalize
+
+    Per ADR-0021: surface="job_side" — runs in Palimpsest job container.
     """
 
     name = "factorio_runtime"
+    surface = "job_side"  # ADR-0021
 
     def setup(self, ctx) -> list[EventData]:
         """Setup Factorio runtime environment.
