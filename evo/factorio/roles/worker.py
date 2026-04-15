@@ -35,7 +35,7 @@ def worker(**params) -> JobSpec:
     """
     return JobSpec(
         context_fn=context_spec(
-            system="factorio/prompts/worker.md",
+            system="prompts/worker.md",
             sections=[{"type": "factorio_scripts"}],
         ),
         tools=["factorio_call_script"],

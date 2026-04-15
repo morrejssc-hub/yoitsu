@@ -20,6 +20,7 @@ Volume=%h/yoitsu/yoitsu-contracts:/workspace/yoitsu-contracts:ro,Z
 Volume=%h/yoitsu/pasloe:/workspace/pasloe:ro,Z
 Volume=%h/yoitsu/palimpsest/evo:/workspace/evo:ro,Z
 Volume=/tmp/yoitsu-workspaces:/tmp/yoitsu-workspaces:Z
+Volume=%h/trenni/bundles:/var/lib/yoitsu/home/trenni/bundles:Z
 Volume=%t/podman/podman.sock:/run/podman/podman.sock
 Volume=yoitsu-dev-state.volume:/var/lib/yoitsu
 Volume=%h/.config/containers/systemd/yoitsu/bin:/opt/yoitsu/bin:ro,Z

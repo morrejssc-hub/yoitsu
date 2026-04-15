@@ -46,7 +46,7 @@ def optimizer(**params) -> JobSpec:
     """
     return JobSpec(
         context_fn=context_spec(
-            system="factorio/prompts/optimizer.md",
+            system="prompts/optimizer.md",
             sections=[],  # Evidence goes via role_params, not context sections
         ),
         tools=[],  # No special tools needed, just LLM analysis

@@ -12,7 +12,7 @@ runtime:
     pull_policy: "never"
     stop_grace_seconds: 10
     cleanup_timeout_seconds: 120
-    retain_on_failure: false
+    retain_on_failure: true  # Keep failed containers for debugging
     git_token_env: "GITHUB_TOKEN"
     env_allowlist:
       - "OPENAI_API_KEY"
@@ -28,10 +28,12 @@ max_workers: 1
 poll_interval: 2.0
 
 bundles:
+  default: {}  # Fallback bundle for repository-authoring tasks
   factorio:
     source:
       url: "https://github.com/guan-spicy-wolf/factorio-bundle.git"
       selector: "evolve"
+      master_selector: "evolve"  # Use evolve for control-plane (same as selector)
     runtime:
       env_allowlist:
         - "OPENAI_API_KEY"
